@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** Draft v0.3 · 2026-10-12  
+**Status:** Draft v0.4 (Phase 0 results in) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -21,42 +21,47 @@ A native SwiftUI app for macOS that reads, edits, and writes the configuration o
 - Other Uniden models (BC75XLT, BCD436HP, and so on). The protocol layer should still leave room for them (see §6.2).
 - Firmware updates.
 - RadioReference database lookup (a candidate for v2).
-- iOS or iPadOS. USB serial there needs DriverKit or MFi, which is out of scope for now.
+- iOS or iPadOS. USB device access there needs DriverKit or MFi, which is out of scope for now.
 - Live remote control or audio. The BC125AT has no status or remote-key commands; a volume/squelch panel is a stretch goal (§8.6).
 
 ## 2. Hardware & Connection
 
+> **Verified in Phase 0** on firmware 1.06.06 / macOS 27.0.1. See `phase0/REPORT.md`.
+
 | Item | Value |
 |---|---|
-| Interface | USB CDC-ACM (virtual serial port) |
-| USB VID / PID | `0x1965` / `0x0017` (bc125py matches on PID 23 = `0x0017`) |
-| Serial | 115200 baud, 8N1, no flow control (**verify**: bc125py uses pySerial's defaults and never sets a baud rate, which suggests the setting is ignored over USB CDC) |
-| Framing | ASCII commands ending in `\r`; responses end in `\r` |
-| Flow | Strictly one command at a time. Uniden's spec says to wait for each response before sending the next command |
-| macOS device | Expected `/dev/cu.usbmodem*`, **unconfirmed and the biggest Phase 0 risk** |
+| USB VID / PID | `0x1965` / `0x0017` |
+| Interfaces | 0: CDC ACM control (class 2/2/0, 1 endpoint). 1: CDC data (class 10), **bulk IN `0x81`, bulk OUT `0x02`, 64-byte packets** |
+| macOS driver | **None usable.** `AppleUSBCDCCompositeDevice` loads but never matches, so there's no `/dev/cu.*` node |
+| Transport | Open interface 1 with `IOUSBHostInterface` and exchange bytes on the bulk pipes. Needs no root, no driver, and **no line-coding/baud or DTR setup** |
+| Framing | ASCII commands ending in `\r`; replies end in `\r`. **Replies can be split across USB transfers**, so reads accumulate until `\r` |
+| Flow | Strictly one command at a time. About 3 ms per command; all 500 channels read in 1.5 s |
 
-**Driver risk.** On Linux, the kernel's `cdc_acm` driver won't claim the scanner automatically. bc125py works around this by writing `1965 0017 2 076d 0006` to `/sys/bus/usb/drivers/cdc_acm/new_id`. That suggests the scanner's USB descriptors aren't fully standard, so macOS's AppleUSBCDC driver may not claim it either. If no `/dev/cu.*` node appears, the fallback is to talk to the scanner's bulk endpoints directly from user space with IOUSBHost (sandbox entitlement `com.apple.security.device.usb`). That needs no kernel driver. The transport layer is a protocol so either backend can be plugged in.
-
-The app finds the scanner by watching IOKit for the VID/PID pair, so the user never has to choose a port. If several scanners are plugged in, the app shows a picker.
+The transport is `USBTransport` in `BC125ATKit`.
+- `IOUSBHostInterface`'s own matching dictionary doesn't find this device's interfaces, so the transport finds the `IOUSBHostDevice` by VID/PID and walks its children for `bInterfaceNumber == 1`.
+- The app watches IOKit for that VID/PID, so the user never picks a port. If several scanners are connected, it shows a picker keyed by `locationID`.
+- A program that already holds a user client on the *device* (Calibre does, while probing for e-readers) did not get in the way, because the app opens the *interface*.
 
 ## 3. Protocol Reference
 
-> **Source:** Uniden's *BC125AT Operation Specification*, Appendix C "PC programming Command" (pp. 54–63; a copy is in the bc125py repo at `docs/BC125AT_Protocol.pdf`), cross-checked against bc125py (MIT, commit `b9454ca`, 2026-01-03). Items marked **verify** are either not covered by the spec or contradicted by it, and are checked on hardware in Phase 0 (§10).
+> **Phase 0 status:** every item that was marked *verify* has now been tested on hardware (`phase0/REPORT.md`); the results are written in below. The only item still open is the exact step rule in §3.5.
+>
+> **Source:** Uniden's *BC125AT Operation Specification*, Appendix C "PC programming Command" (pp. 54–63; a copy is in the bc125py repo at `docs/BC125AT_Protocol.pdf`), cross-checked against bc125py (MIT, commit `b9454ca`, 2026-01-03). Wherever the hardware disagreed with Uniden's document, the hardware wins, and the row says so.
 
 Commands marked **P** only work in program mode. Uniden's official list has exactly 24 commands, all in the table below. There is **no** `STS`, `GLG`, `KEY`, or `PWR` on the BC125AT.
 
 | Cmd | Mode | Get → response | Set | Notes |
 |---|---|---|---|---|
-| `PRG` | – | `PRG` → `PRG,OK` / `PRG,NG` | – | `NG` if the scanner is in Menu mode, Direct Entry, or Quick Save. The display shows "Remote Mode" / "Keypad Lock" |
+| `PRG` | – | `PRG` → `PRG,OK` / `PRG,NG` | – | `NG` if the scanner is in Menu mode, Direct Entry, or Quick Save. The display shows "Remote Mode" / "Keypad Lock". Sending `PRG` while already in program mode returns `PRG,OK` (tested) |
 | `EPG` | – | `EPG` → `EPG,OK` | – | The scanner then goes to **Scan Hold**, not Scan |
 | `MDL` | – | `MDL` → `MDL,BC125AT` | – | |
-| `VER` | – | `VER` → `VER,Version 1.00.00` | – | |
-| `BLT` | P | `BLT` → `BLT,evnt,` | `BLT,evnt` | `AO` always on · `AF` always off · `KY` keypress · `SQ` squelch · `KS` key+squelch. **The response has a trailing comma** |
+| `VER` | – | `VER` → `VER,Version 1.06.06` | – | Tested unit runs 1.06.06 |
+| `BLT` | P | `BLT` → `BLT,evnt,` | `BLT,evnt` | `AO` always on · `AF` always off · `KY` keypress · `SQ` squelch · `KS` key+squelch. Reply is `BLT,KS`. **No trailing comma**, despite what Uniden's spec shows |
 | `BSV` | P | `BSV` → `BSV,hrs` | `BSV,hrs` | Battery charge time, 1–16 h |
 | `CLR` | P | – | `CLR` → `CLR,OK` | Factory-clears all memory. **Takes "dozens of seconds"**, so it needs a long timeout |
 | `KBP` | P | `KBP` → `KBP,level,lock` | `KBP,level,lock` | Beep level `0` auto / `99` off; key lock `0`/`1` |
 | `PRI` | P | `PRI` → `PRI,mode` | `PRI,mode` | `0` off · `1` on · `2` plus on · `3` DND |
-| `SCG` | P | `SCG` → `SCG,##########` | `SCG,##########` | Bank scan enable. **`0` = enabled, `1` = disabled**. Digits in bank order 1…10. The scanner rejects all ten disabled |
+| `SCG` | P | `SCG` → `SCG,##########` | `SCG,##########` | Bank scan enable. **`0` = enabled, `1` = disabled**. Digits in bank order 1…10. Uniden's spec says all ten can't be disabled, **but the scanner accepts `SCG,1111111111`** (tested) |
 | `DCH` | P | – | `DCH,idx` | Delete channel 1–500 |
 | `CIN` | P | `CIN,idx` → `CIN,idx,name,frq,mod,tone,dly,lout,pri` | same as response | See §3.1 |
 | `SCO` | P | `SCO` → `SCO,dly,code_srch` | `SCO,dly,code_srch` | Search/Close Call delay (same values as channel delay); code search `0` off / `1` CTCSS/DCS |
@@ -66,9 +71,9 @@ Commands marked **P** only work in program mode. Uniden's official list has exac
 | `CLC` | P | `CLC` → `CLC,mode,altb,altl,band,lout` | same | Mode `0` off · `1` CC priority · `2` CC DND; alert beep and alert light `0`/`1`; band is 5 digits (§3.4); `lout` = "lockout for CC hits with scan" `0`/`1` |
 | `SSG` | P | `SSG` → `SSG,##########` | same | Service search groups, **`0` = enabled**. Order: Police, Fire/Emergency, Ham, Marine, Railroad, Civil Air, Military Air, CB, FRS/GMRS/MURS, Racing |
 | `CSG` | P | `CSG` → `CSG,##########` | same | Custom search ranges 1…10, **`0` = enabled** |
-| `CSP` | P | `CSP,idx` → `CSP,idx,lo,hi,` | `CSP,idx,lo,hi` | Range index 1–10. **The response has a trailing comma** |
+| `CSP` | P | `CSP,idx` → `CSP,idx,lo,hi,` | `CSP,idx,lo,hi` | Range index 1–10. Reply is `CSP,1,00250000,00279950`. **No trailing comma** |
 | `WXS` | P | `WXS` → `WXS,pri` | `WXS,pri` | Weather alert priority `0`/`1` |
-| `CNT` | P | `CNT` → `CNT,lvl` | `CNT,lvl` | Contrast 1–15. **Out-of-range values are silently replaced with the default**, so validation must catch them |
+| `CNT` | P | `CNT` → `CNT,lvl` | `CNT,lvl` | Contrast 1–15. **An out-of-range value gets `CNT,OK` but is ignored**: `CNT,20` left it at 8. Validation must catch it |
 | `VOL` | – | `VOL` → `VOL,lvl` | `VOL,lvl` | 0–15 |
 | `SQL` | – | `SQL` → `SQL,lvl` | `SQL,lvl` | `0` open · 1–14 · `15` closed |
 
@@ -77,23 +82,25 @@ Set commands reply `<CMD>,OK`.
 **General rules from the spec:**
 - **An empty field in a set command means "leave unchanged".** For example, `CIN,5,,1625500,,,,,` changes only the frequency. Because of this, *clearing* a channel name needs a single space (`CIN,5, ,…`). bc125py fixed exactly this bug in v0.9.
 - The scanner rejects the whole set command if any field is malformed. Nothing is partly applied.
-- **Errors:** `ERR` means a format or value error, and `NG` means the command isn't allowed right now. The spec shows them as bare `ERR\r` and `NG\r`, but `PRG,NG` has the command prefix. The parser accepts both forms.
-- The parser tolerates trailing empty fields (`BLT`, `CSP`).
+- **Errors:** `ERR` means a format or value error, and `NG` means the command isn't allowed right now. Both forms were seen on hardware: an unknown command gives a bare `ERR`, while `CIN,501` gives `CIN,ERR` and `BLT` outside program mode gives `BLT,NG`. The parser accepts both. A reply only counts as an error when it has at most two fields, so a channel *named* "ERR" isn't mistaken for one.
+- The parser still tolerates trailing empty fields, but none were seen.
 
 ### 3.1 Channel fields (`CIN`)
 
 | Field | Encoding | Values |
 |---|---|---|
 | `idx` | int | 1–500 (bank = `(idx-1)/50 + 1`) |
-| `name` | ASCII | ≤ 16 chars. **Commas are forbidden** because they're the field separator. Send a single space to clear a name (see above). **Verify:** which characters the scanner accepts and whether it returns a cleared name as `""` or `" "` |
-| `frq` | int, **units of 100 Hz, no padding** | `1625500` = 162.5500 MHz (the spec's example is `290000` = 29.0 MHz); `0` = empty channel. Writes send no leading zeros, as bc125py does. The parser accepts any number of leading zeros (**verify** whether responses are zero-padded) |
+| `name` | ASCII | ≤ 16 chars. **Every printable ASCII character tested was accepted and stored as sent**, including lowercase and ``!@#$%^&*()-_=+/?.:;'"<>[]{}\|\\~` ``. Commas are forbidden because they're the field separator. **Names longer than 16 characters are silently cut to 16** (`CIN,OK`, not `ERR`), and **trailing spaces are removed**. A single space clears the name, which then reads back as `""` |
+| `frq` | int, units of 100 Hz | **Replies are zero-padded to 8 digits** (`01625500` = 162.5500 MHz; `00000000` = empty). Writes are accepted without padding (`1625500`); the app sends 8 digits to match the replies. **Off-step values are silently snapped** (§3.5) |
 | `mod` | enum | `AUTO` `AM` `FM` `NFM` |
 | `tone` | int code | see §3.2 |
 | `dly` | int | `-10 -5 0 1 2 3 4 5` seconds. Negative values are Uniden's "minus delay" modes |
 | `lout` | bool | `0` unlocked / `1` locked out |
-| `pri` | bool | `0`/`1` (**verify**: whether the scanner allows more than one priority channel per bank. Neither the spec nor bc125py says) |
+| `pri` | bool | `0`/`1`. **Only one priority channel per bank**: making a channel priority silently clears the flag on the bank's previous priority channel (tested). Validation treats two in a bank as an error, and the writer must apply priority changes in an order that ends in the intended state |
 
-Being careful, the `CIN` parser reads `idx` from the left and the last 7 fields from the right. Anything in between is the name. So if a name entered on the keypad ever contains a comma, it still parses correctly.
+An empty channel reads back as `CIN,n,,00000000,AUTO,0,2,1,0`. Note that it's **locked out** by default, and `DCH` returns a channel to exactly this state.
+
+Being careful, the `CIN` parser reads `idx` from the left and the last 6 fields from the right. Anything in between is the name. So if a name entered on the keypad ever contains a comma, it still parses correctly.
 
 ### 3.2 CTCSS/DCS codes (confirmed from the spec, p. 63)
 
@@ -109,9 +116,11 @@ Any other value, such as `1–63`, `114–126`, or `232–239`, is invalid. bc12
 
 ### 3.3 Global lockout list
 - `GLF` is a cursor: each call returns the next locked-out frequency, then `-1`.
-- bc125py resets the cursor by sending `EPG` then `PRG` before each walk. The spec instead says `GLF,<anything>` (reply `GLF,OK`) prepares to "retrieve the 1st L/O frequency". **Verify** that `GLF,0` resets the cursor. If it does, use it, because it avoids the scanner leaving and re-entering program mode.
+- After `-1`, more `GLF` calls keep returning `-1`.
+- **`GLF,0` resets the cursor** (reply `GLF,OK`; tested). The app uses this. bc125py's `EPG`+`PRG` approach also works, but it takes the scanner out of program mode for a moment.
 - Writing compares the lists and sends only the needed `ULF`/`LOF` commands. bc125py instead unlocks everything and locks the full list again.
-- The maximum number of lockouts isn't documented (**verify**).
+- Lockout replies are zero-padded like `CIN` (`GLF,04069875`).
+- The maximum number of lockouts is still unknown. Testing it would mean adding hundreds of temporary entries, so it wasn't done. The app reports `LOF` errors if the list fills up.
 
 ### 3.4 Bit masks: watch the polarity
 
@@ -122,13 +131,33 @@ Any other value, such as `1–63`, `114–126`, or `232–239`, is invalid. bc12
 | `CSG` | 10 | enabled | disabled | custom ranges 1…10 |
 | `CLC` band | 5 | **off** | **on** | VHF Low1, Air, VHF High1, VHF High2, UHF |
 
-At least one item must stay enabled in `SCG`. The spec also says this for `SSG`/`CSG`, though its wording there is garbled ("can not set all … to '0'"). bc125py enforces at least one enabled for all three, and so will we. **Verify** what the scanner does if all are disabled. The Close Call bands may all be off.
+**Tested:** the scanner accepts all ten disabled for `SCG`, `SSG` and `CSG` (`OK`, and it reads back `1111111111`), even though Uniden's spec says it can't be done. So disabling everything is allowed, but the app shows it as a **warning** because the scanner would then have nothing to scan. The Close Call bands may all be off.
 
-### 3.5 Valid frequency ranges
-25.0000–54.0000, 108.0000–174.0000, 225.0000–380.0000, and 400.0000–512.0000 MHz, inclusive. The spec and bc125py's tests agree. The app refuses frequencies outside these ranges outright, and also warns when a frequency isn't on a valid channel step for its band. Neither source gives the step rules (**verify** against the band plan in the BC125AT owner's manual; I recall 5, 6.25, 8.33, and 12.5 kHz steps, but that is unconfirmed). Until that's confirmed, the off-step check is only a warning.
+### 3.5 Valid frequency ranges and steps
+25.0000–54.0000, 108.0000–174.0000, 225.0000–380.0000, and 400.0000–512.0000 MHz, inclusive. Tested: `5120000` was accepted, while `5120100` and `600000` (60 MHz, in a gap) got `CIN,ERR`.
+
+**In-range frequencies that aren't on the scanner's step grid are accepted (`CIN,OK`) and silently snapped:**
+
+| Sent | Stored | Note |
+|---|---|---|
+| 25.0050 | 25.0050 | kept (5 kHz) |
+| 118.0083 | 118.0083 | kept (8.33 kHz air) |
+| 118.0050 | 118.0083 | snapped onto the 8.33 kHz grid |
+| 154.0062 | 154.0025 | |
+| 154.0063 | 154.0100 | |
+| 162.5510 | 162.5475 | |
+| 162.5525 | 162.5550 | |
+| 406.0125 | 406.0125 | kept (12.5 kHz) |
+| 406.0050 | 406.0062 | snapped onto a 6.25 kHz grid (406.00625 truncated to 100 Hz) |
+
+The VHF-high results don't fit a single grid, so the step rule is **still open**. Each band probably has its own step plan, which would explain why Close Call splits VHF into High1 and High2. Until the rule is known:
+- The app never assumes a frequency is stored as typed. Every write is read back (§7), and any frequency the scanner snapped is shown in the result: "Channel 12: 154.0062 was stored as 154.0025".
+- Once the rule is derived, the editor warns *before* writing.
+
+Proposed follow-up: a **step sweep** on one spare channel that writes every 100 Hz value across a 25 kHz window in each band (about 250 writes per band) and records what's stored. That's enough to derive the grids exactly. It's held back because it's about 1,500 writes to the scanner's memory, so it needs your OK.
 
 ### 3.6 Factory default custom search ranges
-From bc125py's defaults (**verify** against your scanner's `CSP` readout). The app uses these as the defaults for a new, empty document:
+From bc125py's defaults. **These match the tested scanner's `CSP` readout exactly.** The app uses these as the defaults for a new, empty document:
 
 | # | Range (MHz) | # | Range (MHz) |
 |---|---|---|---|
@@ -175,7 +204,7 @@ Each model type has its own `validate() -> [ValidationIssue]`. An issue is eithe
 
 ```
 BC125ATKit (Swift package, no UI)
-├── Transport      SerialPort (POSIX termios on a dedicated thread) · MockTransport
+├── Transport      USBTransport (IOUSBHost bulk pipes, §2) · MockTransport
 ├── Protocol       Command enum → encode / decode · response parser · error types
 ├── Model          ScannerConfig and friends, validation, tone tables
 ├── Sync           ScannerSession actor: connect, readAll, diff, write(changes), progress
@@ -185,7 +214,7 @@ BC125ATCPS (SwiftUI app)
 ```
 
 ### 6.1 Concurrency
-- `ScannerSession` is an `actor`. It owns the port and runs one command at a time, as Uniden's spec requires. Each command has a timeout (default 1 s; `CLR` 120 s, because the spec says it takes "dozens of seconds"). A timed-out read is retried once, but only for get commands. A set command that times out is never sent again blindly: the session reads the item back to find out whether it was applied.
+- `ScannerSession` is an `actor`. It owns the transport and runs one command at a time, as Uniden's spec requires. Commands take about 3 ms. Each has a timeout (default 1 s; `CLR` 120 s, because the spec says it takes "dozens of seconds"). A timed-out read is retried once, but only for get commands. A set command that times out is never sent again blindly: the session reads the item back to find out whether it was applied.
 - Long jobs (reading all, writing) report progress through an `AsyncStream<SyncProgress>` and can be cancelled. On cancel or any error, the session always sends `EPG` so the radio isn't left stuck in program mode.
 - Built with Swift 6 strict concurrency.
 
@@ -193,19 +222,19 @@ BC125ATCPS (SwiftUI app)
 Commands are described by a `ScannerModel` protocol: channel count, bank count, ranges, and which commands it supports. This keeps a second model possible later without generalizing everything now.
 
 ### 6.3 Sandbox & Distribution
-- The app is sandboxed with the `com.apple.security.device.serial` entitlement and user-selected file read/write access.
+- The app is sandboxed with the **`com.apple.security.device.usb`** entitlement (USB via IOUSBHost, not serial; §2) and user-selected file read/write access. **To check in milestone 2:** that sandboxed IOUSBHost interface access works in an ad-hoc-signed build.
 - It's distributed as a zipped `.app` attached to GitHub Releases. It isn't on the Mac App Store.
 - **No paid Apple Developer account yet**, so release builds are **ad-hoc signed and not notarized**. The README will explain how to get past Gatekeeper: on macOS 15, open System Settings → Privacy & Security → "Open Anyway", or run `xattr -dr com.apple.quarantine`. If we sign up for a developer account later, the only change is adding a Developer ID signing and `notarytool` step to the release script.
 - Releases are built by a local script, `scripts/release.sh`, that runs `xcodebuild archive`, signs ad-hoc, and zips the app. CI on GitHub Actions can come later, once the repo is published.
 
 ## 7. Sync Behavior
 
-1. **Read from Scanner**: runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 520 round trips, and the target is under 15 s. The result opens as a new untitled document, or replaces the current one after a confirmation.
+1. **Read from Scanner**: runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. The result opens as a new untitled document, or replaces the current one after a confirmation.
 2. **Write to Scanner**:
    1. Validate the document. Any errors stop the write.
    2. Read the scanner's current state, or reuse a cached read from this session if it's still fresh.
    3. Work out the diff and show a review sheet listing the changes by section (for example "37 channels changed, 2 lockouts added").
-   4. Write only the changed items, read each one back, and check it.
+   4. Write only the changed items, read each one back, and check it. A mismatch caused by snapping (§3.5), truncation, or a priority flag cleared elsewhere in the bank (§3.1) is reported as an adjustment, not a failure, and the document is updated to match.
    5. Report the result. A partial failure lists exactly which items didn't match.
 3. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
 4. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
@@ -233,7 +262,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 Toggles for service search groups. A table with 10 custom ranges (low, high, enabled). Close Call settings for mode, alert beep, alert light, the band checkboxes, and lockout. Search delay and code search.
 
 ### 8.4 Global Lockouts
-An editable list of frequencies with add and remove (**verify** the device's maximum count; §3.3).
+An editable list of frequencies with add and remove. The maximum count is unknown (§3.3).
 
 ### 8.5 Settings
 Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. Bank names are stored in the document only and are clearly labeled that way.
@@ -250,7 +279,7 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 - **Hardware tests** are opt-in. They're gated by an environment variable, run against a real BC125AT, and limited to read-only commands unless `BC125AT_ALLOW_WRITE=1` is set.
 
 ## 10. Milestones
-0. **Protocol verification**: a small CLI in the package (`bc125at-cli info|dump|raw <cmd>`) that confirms the macOS driver works (or proves the IOUSBHost fallback is needed) and checks every **verify** item in §2–3 on real hardware. It reads only, except for clearly labelled round-trip tests on one spare channel. Update this spec with the results.
+0. ✅ **Protocol verification** (done 2026-10-12; `phase0/REPORT.md`; the step sweep in §3.5 is pending): a small CLI in the package (`bc125at-cli info|dump|raw <cmd>`) that confirms the macOS driver works (or proves the IOUSBHost fallback is needed) and checks every **verify** item in §2–3 on real hardware. It reads only by default. `--allow-write` adds round-trip tests on two empty channels and a few settings; each change is restored and read back.
 1. **Kit**: transport, protocol, model, validation, native and CSV formats, and the mock transport, all with tests.
 2. **Read-only app**: document app, channel table, and Read from Scanner.
 3. **Editing**: all editors, validation in the UI, undo, and copy/paste.
@@ -274,4 +303,4 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 ## 12. Open Questions
 1. Sample files from Uniden's own software are needed before milestone 6. bc125py's `.125at` files are its own command scripts, not Uniden's format.
 2. Should the app also accept the BC126AT, the international version? bc125py looks for it by name, and it probably uses the same protocol. If yes, accept `MDL,BC126AT` and check whether its frequency ranges differ.
-3. The **verify** items in §2–3 all go to Phase 0.
+3. May we run the frequency **step sweep** (§3.5)? It's about 1,500 writes to one spare channel.

@@ -9,3 +9,6 @@ xcuserdata/
 *.xcarchive
 # Release output
 dist/
+
+# Scanner backups and dumps (personal channel data)
+phase0/*.txt
