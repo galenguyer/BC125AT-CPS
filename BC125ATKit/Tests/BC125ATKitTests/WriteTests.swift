@@ -127,3 +127,26 @@ import Testing
         #expect(!mock.inProgramMode)
     }
 }
+
+@Suite struct ChannelClipboardTests {
+    @Test func roundTrips() throws {
+        let config = sampleConfig()
+        let channels = [config[channel: 1], config[channel: 2], .empty, config[channel: 75]]
+        let text = ChannelClipboard.text(for: channels)
+        #expect(text.hasPrefix("Name\tFrequency\tModulation\tTone\tDelay\tLockout\tPriority\nAir Guard\t121.5000\tAM\tNone\t2\tNo\tNo\n"))
+        #expect(ChannelClipboard.channels(from: text) == channels)
+    }
+
+    @Test func pastesFromSpreadsheetsWithoutHeaders() {
+        let pasted = ChannelClipboard.channels(from: "Tower\t118.3\tAM\n\tnot a frequency\n")
+        #expect(pasted == nil)
+        let ok = ChannelClipboard.channels(from: "Tower\t118.3\tAM\nGround\t121.9\tAM\n")
+        #expect(ok?.map(\.name) == ["Tower", "Ground"])
+        #expect(ok?.allSatisfy { !$0.lockedOut } == true)
+    }
+
+    @Test func pastesAColumnOfFrequencies() {
+        let pasted = ChannelClipboard.channels(from: "162.4\n162.425\n162.45\n")
+        #expect(pasted?.compactMap(\.frequency).map(\.megahertzString) == ["162.4000", "162.4250", "162.4500"])
+    }
+}

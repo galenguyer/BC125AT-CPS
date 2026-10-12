@@ -53,7 +53,7 @@ final class ScannerReader {
         state = .idle
     }
 
-    private static func message(for error: any Error) -> String {
+    static func message(for error: any Error) -> String {
         switch error {
         case let error as SessionError: error.description
         case let error as TransportError:

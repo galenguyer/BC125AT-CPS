@@ -1,5 +1,6 @@
 import BC125ATKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum SidebarItem: Hashable {
     case allChannels
@@ -14,15 +15,20 @@ struct DocumentView: View {
     @Environment(ScannerMonitor.self) private var monitor
     @State private var selection: SidebarItem? = .allChannels
     @State private var reader = ScannerReader()
+    @State private var writer = ScannerWriter()
     @State private var confirmingReplace = false
     @State private var showingIssues = false
+    @State private var blockingErrors: [ValidationIssue] = []
+    @State private var importingCSV = false
+    @State private var exportingCSV = false
+    @State private var importSummary: String?
 
     private var config: ScannerConfig { document.config }
 
     var body: some View {
         let issues = config.validate()
         NavigationSplitView {
-            Sidebar(config: config, issues: issues, selection: $selection)
+            Sidebar(config: $document.config, issues: issues, selection: $selection)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } detail: {
             detail(issues: issues)
@@ -34,36 +40,64 @@ struct DocumentView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Read from Scanner", systemImage: "square.and.arrow.down", action: requestRead)
                     .help("Read the whole configuration from the connected scanner")
-                    .disabled(!canRead)
+                    .disabled(!canUseScanner)
+                Button("Write to Scanner", systemImage: "square.and.arrow.up", action: requestWrite)
+                    .help("Write this document to the connected scanner")
+                    .disabled(!canUseScanner)
                 IssuesButton(issues: issues, isPresented: $showingIssues) { location in
                     selection = sidebarItem(for: location)
                 }
             }
         }
-        .focusedSceneValue(\.readFromScanner, ReadFromScannerAction(perform: requestRead, isEnabled: canRead))
+        .focusedSceneValue(\.documentActions, DocumentActions(
+            read: requestRead, write: requestWrite, canUseScanner: canUseScanner,
+            importCSV: { importingCSV = true }, exportCSV: { exportingCSV = true }
+        ))
         .confirmationDialog("Replace this document with the scanner's contents?", isPresented: $confirmingReplace) {
             Button("Read and Replace", action: startRead)
         } message: {
             Text("Everything in this document will be replaced by what's on the scanner. You can undo this.")
         }
+        .alert("Fix \(blockingErrors.count) \(blockingErrors.count == 1 ? "Problem" : "Problems") Before Writing",
+               isPresented: Binding(get: { !blockingErrors.isEmpty }, set: { if !$0 { blockingErrors = [] } })) {
+            Button("Show Problems") { showingIssues = true }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(blockingErrors.prefix(5).map { "\($0.location.title): \($0.message)" }.joined(separator: "\n")
+                 + (blockingErrors.count > 5 ? "\n…and \(blockingErrors.count - 5) more" : ""))
+        }
+        .alert("Channels Imported", isPresented: Binding(get: { importSummary != nil }, set: { if !$0 { importSummary = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(importSummary ?? "")
+        }
         .sheet(isPresented: .constant(reader.state.isPresented)) {
             ReadProgressSheet(reader: reader)
         }
+        .sheet(isPresented: .constant(writer.state.isPresented)) {
+            WriteSheet(writer: writer, write: startWrite)
+        }
+        .fileImporter(isPresented: $importingCSV, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
+            if case .success(let url) = result { importCSV(from: url) }
+        }
+        .fileExporter(isPresented: $exportingCSV, document: CSVDocument(text: CSVFormat.export(config)),
+                      contentType: .commaSeparatedText, defaultFilename: "Channels") { _ in }
     }
 
     @ViewBuilder
     private func detail(issues: [ValidationIssue]) -> some View {
         switch selection {
         case .allChannels, nil:
-            ChannelTableView(config: config, numbers: Array(1...ScannerConfig.channelCount), issues: issues, title: "All Channels")
+            ChannelTableView(config: $document.config, numbers: Array(1...ScannerConfig.channelCount), issues: issues, title: "All Channels")
         case .bank(let bank):
-            ChannelTableView(config: config, numbers: Array(Channel.channels(inBank: bank)), issues: issues, title: bankTitle(bank))
+            ChannelTableView(config: $document.config, numbers: Array(Channel.channels(inBank: bank)), issues: issues, title: bankTitle(bank))
+                .id(bank)
         case .search:
-            SearchView(config: config, issues: issues)
+            SearchView(config: $document.config, issues: issues)
         case .globalLockouts:
-            GlobalLockoutsView(config: config, issues: issues)
+            GlobalLockoutsView(config: $document.config, issues: issues)
         case .settings:
-            SettingsView(config: config, issues: issues)
+            SettingsView(config: $document.config, issues: issues)
         }
     }
 
@@ -75,19 +109,19 @@ struct DocumentView: View {
     private func sidebarItem(for location: ValidationIssue.Location) -> SidebarItem {
         switch location {
         case .channel(let number): .bank(Channel.bank(ofChannel: number))
-        case .bank(let bank): .bank(bank)
+        case .bank: .settings
         case .settings: .settings
         case .search, .closeCall: .search
         case .globalLockouts: .globalLockouts
         }
     }
 
+    private var canUseScanner: Bool { monitor.selectedDevice != nil && !reader.isReading && !writer.isBusy }
+
     // MARK: Reading
 
-    private var canRead: Bool { monitor.selectedDevice != nil && !reader.isReading }
-
     private func requestRead() {
-        guard canRead else { return }
+        guard canUseScanner else { return }
         if document.config == ScannerConfig() { startRead() } else { confirmingReplace = true }
     }
 
@@ -105,6 +139,77 @@ struct DocumentView: View {
         merged.bankNames = document.config.bankNames
         merged.metadata.notes = document.config.metadata.notes
         document.config = merged
+    }
+
+    // MARK: Writing
+
+    /// Errors block writing (SPEC.md §7); warnings don't.
+    private func requestWrite() {
+        guard canUseScanner, let device = monitor.selectedDevice else { return }
+        let errors = config.validate().filter { $0.severity == .error }
+        guard errors.isEmpty else {
+            blockingErrors = errors
+            return
+        }
+        writer.prepare(document: config, device: device)
+    }
+
+    private func startWrite() {
+        guard let device = monitor.selectedDevice else { return }
+        writer.write(device: device) { report, plan in
+            // When everything verified, update the document to exactly what the scanner stored
+            // (snapped frequencies, trimmed names). On failure, keep the document as the user left it.
+            guard report.succeeded, !plan.adjustments.isEmpty else { return }
+            var updated = plan.target
+            updated.metadata = document.config.metadata
+            document.config = updated
+        }
+    }
+
+    // MARK: CSV
+
+    private func importCSV(from url: URL) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            let text = String(decoding: data, as: UTF8.self)
+            let imported = try CSVFormat.importChannels(from: text)
+            var updated = document.config
+            for (number, channel) in imported.channels { updated[channel: number] = channel }
+            document.config = updated
+            var summary = "\(imported.channels.count) \(imported.channels.count == 1 ? "channel" : "channels") imported from \(url.lastPathComponent)."
+            if !imported.problems.isEmpty {
+                summary += "\n\n\(imported.problems.count) \(imported.problems.count == 1 ? "row was" : "rows were") skipped:\n"
+                summary += imported.problems.prefix(8).map { "Line \($0.line): \($0.message)" }.joined(separator: "\n")
+            }
+            importSummary = summary
+        } catch let error as CSVFormat.ImportError {
+            importSummary = error.description
+        } catch {
+            importSummary = error.localizedDescription
+        }
+    }
+}
+
+struct CSVDocument: FileDocument {
+    static let readableContentTypes: [UTType] = [.commaSeparatedText]
+    var text: String
+
+    init(text: String) { self.text = text }
+
+    init(configuration: ReadConfiguration) throws {
+        text = String(decoding: configuration.file.regularFileContents ?? Data(), as: UTF8.self)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(text.utf8))
+    }
+}
+
+extension ScannerWriter.State {
+    var isPresented: Bool {
+        if case .idle = self { false } else { true }
     }
 }
 
@@ -154,7 +259,7 @@ struct IssuesButton: View {
         Button {
             isPresented.toggle()
         } label: {
-            Label(issues.isEmpty ? "No Issues" : "\(issues.count) Issues",
+            Label(issues.isEmpty ? "No Issues" : issues.count == 1 ? "1 Issue" : "\(issues.count) Issues",
                   systemImage: issues.isEmpty ? "checkmark.circle" : errors > 0 ? "xmark.octagon" : "exclamationmark.triangle")
                 .labelStyle(.titleAndIcon)
                 .foregroundStyle(issues.isEmpty ? Color.secondary : errors > 0 ? Color.red : Color.orange)

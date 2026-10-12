@@ -52,56 +52,68 @@ public enum CSVFormat {
         for (offset, row) in rows.dropFirst().enumerated() {
             let line = offset + 2
             guard row.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { continue }
-            func value(_ column: Column) -> String? {
-                guard let index = columns[column], index < row.count else { return nil }
-                let text = row[index].trimmingCharacters(in: .whitespaces)
-                return text.isEmpty ? nil : text
-            }
-            func problem(_ message: String) { result.problems.append((line, message)) }
-
-            guard let number = value(.channel).flatMap(Int.init), (1...ScannerConfig.channelCount).contains(number) else {
-                problem("Channel number \(value(.channel)?.debugDescription ?? "is missing") isn't 1–500")
+            let numberText = columns[.channel].flatMap { row.indices.contains($0) ? row[$0].trimmingCharacters(in: .whitespaces) : nil } ?? ""
+            guard let number = Int(numberText), (1...ScannerConfig.channelCount).contains(number) else {
+                result.problems.append((line, "Channel number \(numberText.isEmpty ? "is missing" : numberText.debugDescription) isn't 1–500"))
                 continue
             }
-            var channel = Channel(name: columns[.name].flatMap { row.indices.contains($0) ? row[$0] : nil } ?? "")
-            if let text = value(.frequency) {
-                // bc125py writes empty channels as 000.0000.
-                if !text.allSatisfy({ $0 == "0" || $0 == "." }) {
-                    guard let frequency = Frequency(parsing: text) else { problem("Frequency \(text.debugDescription) isn't a number"); continue }
-                    channel.frequency = frequency
-                }
+            switch channel(from: row, columns: columns) {
+            case .success(let channel): result.channels.append((number, channel))
+            case .failure(let problem): result.problems.append((line, problem.message))
             }
-            if let text = value(.modulation) {
-                let normalized = text.uppercased() == "FMN" ? "NFM" : text.uppercased()
-                guard let modulation = Modulation(rawValue: normalized) else { problem("Modulation \(text.debugDescription) isn't AUTO, AM, FM, or NFM"); continue }
-                channel.modulation = modulation
-            }
-            if let text = value(.tone) {
-                // Human-readable first ("100" is 100.0 Hz), then bc125py's older raw codes.
-                guard let tone = ToneCode(parsing: text) ?? Int(text).flatMap(ToneCode.init(code:)) else {
-                    problem("Tone \(text.debugDescription) isn't a CTCSS tone or DCS code"); continue
-                }
-                channel.tone = tone
-            }
-            if let text = value(.delay) {
-                guard let delay = Int(text.replacingOccurrences(of: "−", with: "-")).flatMap(Delay.init(rawValue:)) else {
-                    problem("Delay \(text.debugDescription) isn't one of −10, −5, 0, 1, 2, 3, 4, 5"); continue
-                }
-                channel.delay = delay
-            }
-            if let text = value(.lockout) {
-                guard let flag = flag(text, trueWords: ["locked", "lockedout", "lockout"], falseWords: ["unlocked"]) else {
-                    problem("Lockout \(text.debugDescription) isn't yes or no"); continue
-                }
-                channel.lockedOut = flag
-            }
-            if let text = value(.priority) {
-                guard let flag = flag(text, trueWords: [], falseWords: []) else { problem("Priority \(text.debugDescription) isn't yes or no"); continue }
-                channel.priority = flag
-            }
-            result.channels.append((number, channel.isEmpty ? .empty : channel))
         }
         return result
+    }
+
+    struct RowProblem: Error {
+        var message: String
+    }
+
+    /// Builds a channel from one row, using whichever columns are present. Shared with
+    /// `ChannelClipboard` so pasted rows and imported files understand the same values.
+    static func channel(from row: [String], columns: [Column: Int]) -> Result<Channel, RowProblem> {
+        func value(_ column: Column) -> String? {
+            guard let index = columns[column], index < row.count else { return nil }
+            let text = row[index].trimmingCharacters(in: .whitespaces)
+            return text.isEmpty ? nil : text
+        }
+        var channel = Channel(name: columns[.name].flatMap { row.indices.contains($0) ? row[$0] : nil } ?? "")
+        if let text = value(.frequency) {
+            // bc125py writes empty channels as 000.0000.
+            if !text.allSatisfy({ $0 == "0" || $0 == "." }) {
+                guard let frequency = Frequency(parsing: text) else { return .failure(.init(message: "Frequency \(text.debugDescription) isn't a number")) }
+                channel.frequency = frequency
+            }
+        }
+        if let text = value(.modulation) {
+            let normalized = text.uppercased() == "FMN" ? "NFM" : text.uppercased()
+            guard let modulation = Modulation(rawValue: normalized) else { return .failure(.init(message: "Modulation \(text.debugDescription) isn't AUTO, AM, FM, or NFM")) }
+            channel.modulation = modulation
+        }
+        if let text = value(.tone) {
+            // Human-readable first ("100" is 100.0 Hz), then bc125py's older raw codes.
+            guard let tone = ToneCode(parsing: text) ?? Int(text).flatMap(ToneCode.init(code:)) else {
+                return .failure(.init(message: "Tone \(text.debugDescription) isn't a CTCSS tone or DCS code"))
+            }
+            channel.tone = tone
+        }
+        if let text = value(.delay) {
+            guard let delay = Int(text.replacingOccurrences(of: "−", with: "-").replacingOccurrences(of: " s", with: "")).flatMap(Delay.init(rawValue:)) else {
+                return .failure(.init(message: "Delay \(text.debugDescription) isn't one of −10, −5, 0, 1, 2, 3, 4, 5"))
+            }
+            channel.delay = delay
+        }
+        if let text = value(.lockout) {
+            guard let flag = flag(text, trueWords: ["locked", "lockedout", "lockout"], falseWords: ["unlocked"]) else {
+                return .failure(.init(message: "Lockout \(text.debugDescription) isn't yes or no"))
+            }
+            channel.lockedOut = flag
+        }
+        if let text = value(.priority) {
+            guard let flag = flag(text, trueWords: [], falseWords: []) else { return .failure(.init(message: "Priority \(text.debugDescription) isn't yes or no")) }
+            channel.priority = flag
+        }
+        return .success(channel.isEmpty ? .empty : channel)
     }
 
     // MARK: Columns
@@ -125,6 +137,10 @@ public enum CSVFormat {
         }
     }
 
+    static func columns(fromHeader row: [String]) -> [Column: Int] {
+        Dictionary(row.enumerated().compactMap { offset, title in column(named: title).map { ($0, offset) } }, uniquingKeysWith: { first, _ in first })
+    }
+
     static func column(named title: String) -> Column? {
         let key = title.lowercased().filter { $0.isLetter || $0.isNumber }
         return Column.allCases.first { $0.aliases.contains(key) }
@@ -145,7 +161,7 @@ public enum CSVFormat {
         return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
-    static func parse(_ text: String) -> [[String]] {
+    static func parse(_ text: String, delimiter: Unicode.Scalar = ",") -> [[String]] {
         var rows: [[String]] = [], row: [String] = [], field = ""
         var inQuotes = false
         var iterator = text.unicodeScalars.makeIterator()
@@ -162,7 +178,7 @@ public enum CSVFormat {
             }
             switch scalar {
             case "\"" where field.isEmpty: inQuotes = true
-            case ",": row.append(field); field = ""
+            case delimiter: row.append(field); field = ""
             case "\r", "\n":
                 if scalar == "\r", pending == "\n" { pending = iterator.next() }
                 row.append(field); rows.append(row); row = []; field = ""

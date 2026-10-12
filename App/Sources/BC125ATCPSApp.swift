@@ -16,27 +16,39 @@ struct BC125ATCPSApp: App {
     }
 }
 
-/// The frontmost document window's "Read from Scanner" action.
-struct ReadFromScannerAction {
-    var perform: @MainActor () -> Void
-    var isEnabled: Bool
+/// The frontmost document window's scanner and import/export actions, for the menus.
+struct DocumentActions {
+    var read: @MainActor () -> Void
+    var write: @MainActor () -> Void
+    var canUseScanner: Bool
+    var importCSV: @MainActor () -> Void
+    var exportCSV: @MainActor () -> Void
 }
 
 extension FocusedValues {
-    @Entry var readFromScanner: ReadFromScannerAction?
+    @Entry var documentActions: DocumentActions?
 }
 
 struct ScannerCommands: Commands {
     var monitor: ScannerMonitor
-    @FocusedValue(\.readFromScanner) private var readFromScanner
-    @State private var releaseError: String?
+    @FocusedValue(\.documentActions) private var actions
 
     var body: some Commands {
+        CommandGroup(replacing: .importExport) {
+            Button("Import Channels from CSV…") { actions?.importCSV() }
+                .disabled(actions == nil)
+            Button("Export Channels as CSV…") { actions?.exportCSV() }
+                .disabled(actions == nil)
+        }
         CommandMenu("Scanner") {
-            Button("Read from Scanner…") { readFromScanner?.perform() }
+            Button("Read from Scanner…") { actions?.read() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(readFromScanner?.isEnabled != true)
+                .disabled(actions?.canUseScanner != true)
+            Button("Write to Scanner…") { actions?.write() }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .disabled(actions?.canUseScanner != true)
             Divider()
+            Button("Show Backups in Finder") { BackupStore.reveal() }
             Button("Release Scanner") { release() }
                 .disabled(monitor.selectedDevice == nil)
                 .help("Take the scanner out of program mode if it was left stuck there")

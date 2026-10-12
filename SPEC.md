@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** v0.6 (milestones 0–2 complete) · 2026-10-12  
+**Status:** v0.7 (milestones 0–4 complete) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -255,16 +255,17 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 ## 7. Sync Behavior
 
 1. **Read from Scanner** (⇧⌘R): checks `MDL` is BC125AT, runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. A progress sheet can cancel; the result says the scanner is in Scan Hold. On an untitled, unchanged document the read fills it directly; otherwise it asks before replacing. App-only bank names and notes are kept, and **one ⌘Z undoes the read**. SwiftUI registers that undo for changes made through the document binding, so the app must not register its own as well, or every read would take two ⌘Z presses. (SwiftUI's undo entry has no action name, so the menu says "Undo", not "Undo Read from Scanner".) The result opens as a new untitled document, or replaces the current one after a confirmation.
-2. **Write to Scanner**:
-   1. Validate the document. Any errors stop the write.
-   2. Read the scanner's current state, or reuse a cached read from this session if it's still fresh.
-   3. Work out the diff and show a review sheet listing the changes by section (for example "37 channels changed, 2 lockouts added").
+2. **Write to Scanner** (⇧⌘U):
+   1. Validate the document. Any errors stop the write and list the problems.
+   2. Read the scanner's current state; it's always read fresh. If nothing differs, the app says the scanner is up to date and writes nothing.
+   3. Work out the diff (`WritePlan`) and show a review sheet listing the changes by section, plus anything the scanner will store differently (for example "154.0062 MHz will be stored as 154.0025 MHz").
    4. Write only the changed items, read each one back, and check it. A mismatch caused by snapping (§3.5), truncation, or a priority flag cleared elsewhere in the bank (§3.1) is reported as an adjustment, not a failure, and the document is updated to match.
-   5. Report the result. A partial failure lists exactly which items didn't match.
+   5. Report the result. A partial failure lists exactly which items the scanner rejected and which still differ after reading back; the document is then left as it was. On success with adjustments, the document is updated to the stored values (one undo step).
+   - Under the hood: one command per difference; priority channels are written last, because setting one clears the bank's others; lockout removals go before additions. Rejected commands (`ERR`/`NG`) are recorded and the rest still written; a timeout or cancel stops the write. Verification reads the whole scanner back and plans again, so anything still in that plan is a mismatch.
 3. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
 4. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
 5. **After writing**, the scanner sits in Scan Hold (`EPG` doesn't resume scanning). The completion message tells the user to press Scan.
-6. **Automatic backup**: every write first saves the scanner's previous state to `~/Library/Application Support/BC125AT CPS/Backups/<timestamp>.bc125at`.
+6. **Automatic backup**: every write first saves the scanner's previous state to `Application Support/BC125AT CPS/Backups/Scanner backup <date> at <time>.bc125at`, inside the app's sandbox container. If the backup can't be saved, nothing is written. The newest 50 are kept. Scanner ▸ Show Backups in Finder opens the folder.
 
 ## 8. User Interface
 
@@ -277,9 +278,11 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 ### 8.2 Channel table
 - A SwiftUI `Table` that shows all 500 rows or one bank, with sortable columns.
 - Cells edit inline. The frequency field accepts `162.55`, `162550k`, and similar forms and normalizes them. Invalid cells get a red badge with a tooltip.
-- Selecting several rows allows bulk edits: modulation, tone, delay, lockout, and "Clear".
-- Copy and paste uses TSV on the pasteboard, so it works with Numbers and Excel. Pasting into a selection fills consecutive slots.
-- Rows can be dragged to reorder within or between banks. Moving a channel moves its whole record.
+- Selecting several rows allows bulk edits from the context menu: modulation, tone, delay, lock out / unlock, priority (single channel), and Clear. Delete clears the selected channels.
+- Making a channel priority clears the other priority channel in its bank, as the scanner itself would.
+- Typing a frequency into an empty row creates an active channel (empty channels are locked out on the scanner); clearing a frequency empties the channel. Text cells commit on Return or when focus leaves, so each edit is one undo step.
+- Copy, cut and paste use TSV on the pasteboard (`ChannelClipboard`), so they work with Numbers and Excel. Pasting starts at the first selected channel and fills consecutive slots, stopping at 500. Pasted text may have a header row (columns matched by name, as for CSV), or be in Name, Frequency, Modulation, Tone, Delay, Lockout, Priority order, or be a single column of frequencies.
+- *(Milestone 5)* Rows can be dragged to reorder within or between banks. Moving a channel moves its whole record. Until then, cut and paste does the same job.
 - Cmd-F filters by name or frequency.
 - Every edit can be undone through the document's `UndoManager`.
 
@@ -307,8 +310,8 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 0. ✅ **Protocol verification** (done 2026-10-12; `phase0/REPORT.md` and `phase0/band-plan.json`): a small CLI in the package (`bc125at-cli info|dump|raw|verify|probe`) that confirms the macOS driver works (or proves the IOUSBHost fallback is needed) and checks every **verify** item in §2–3 on real hardware. It reads only by default. `--allow-write` adds round-trip tests on two empty channels and a few settings; each change is restored and read back.
 1. ✅ **Kit**: transport, protocol, model, validation (including `BandPlan`), native and CSV formats (CSV also imports bc125py exports), a stateful mock scanner, and the `ScannerSession` actor, all with tests.
 2. ✅ **Read-only app**: document app (`.bc125at`), channel table (all channels or per bank, search, show/hide empty, issue badges), read-only Settings / Search & Close Call / Global Lockouts views, an issues popover, connection status with hot-plug detection, Read from Scanner, and Release Scanner. Verified end to end against a real BC125AT in the sandboxed, ad-hoc-signed app.
-3. **Editing**: all editors, validation in the UI, undo, and copy/paste.
-4. **Write**: diff review, writing only changes, read-back checks, and backups.
+3. ✅ **Editing**: inline channel editing, bulk edits, copy/cut/paste, Delete, editable Settings (including bank names and scan flags), Search & Close Call and Global Lockouts, validation shown inline, undo for every edit, and CSV import/export (File menu).
+4. ✅ **Write**: diff review, writing only changes, read-back checks, and backups. Verified against a real BC125AT: from the CLI (5 changes, then restoring the original) and from the app (pasting channels, an off-plan frequency that was adjusted, clearing channels, and the up-to-date case). Each test ended with a dump identical to the backup.
 5. **Polish**: drag reordering, inspector, accessibility, app icon, release script, README.
 6. **Uniden import**: open `.bc125at_ss` files (needs sample files).
 

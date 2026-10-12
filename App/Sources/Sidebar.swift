@@ -2,7 +2,7 @@ import BC125ATKit
 import SwiftUI
 
 struct Sidebar: View {
-    var config: ScannerConfig
+    @Binding var config: ScannerConfig
     var issues: [ValidationIssue]
     @Binding var selection: SidebarItem?
 
@@ -15,6 +15,9 @@ struct Sidebar: View {
                 ForEach(1...ScannerConfig.bankCount, id: \.self) { bank in
                     BankRow(bank: bank, config: config, hasErrors: bankHasErrors(bank))
                         .tag(SidebarItem.bank(bank))
+                        .contextMenu {
+                            Toggle("Include in Scan", isOn: $config.bankScanEnabled[bank - 1])
+                        }
                 }
             }
             Section("Scanner") {
