@@ -1,0 +1,11 @@
+.DS_Store
+# Xcode / SwiftPM
+build/
+DerivedData/
+.build/
+.swiftpm/
+*.xcuserstate
+xcuserdata/
+*.xcarchive
+# Release output
+dist/
