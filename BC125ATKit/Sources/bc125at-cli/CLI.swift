@@ -11,6 +11,8 @@ let usage = """
       info                     Show model and firmware version
       raw [--prg] <cmd>...     Send raw commands and print the replies (--prg wraps them in PRG/EPG)
       dump                     Read every setting and channel (read-only) and print the raw replies
+      read <file.bc125at>      Read the whole configuration with ScannerSession (as the app does)
+                               and save it as a .bc125at document
       verify [--allow-write]   Run the Phase 0 protocol checks (SPEC.md §10) and print a report.
                                --allow-write also runs round-trip tests that modify, then restore,
                                spare empty channels and a few settings.
@@ -89,6 +91,12 @@ enum CLI {
             for device in devices {
                 print("\(device.productName)  location 0x\(String(device.locationID, radix: 16))")
             }
+            exit(0)
+        }
+
+        if command == "read" {
+            guard let path = arguments.first else { fail("read needs an output file") }
+            readDocument(to: path)
             exit(0)
         }
 
@@ -174,5 +182,39 @@ enum CLI {
             fail("\(error)")
         }
         saveTranscript()
+    }
+}
+
+/// Runs `ScannerSession.readConfiguration` — the app's read path — and saves the result.
+func readDocument(to path: String) {
+    let done = DispatchSemaphore(value: 0)
+    let outcome = Mutex<Result<ScannerConfig, any Error>?>(nil)
+    Task {
+        let result: Result<ScannerConfig, any Error>
+        do {
+            let session = try ScannerSession.open()
+            result = .success(try await session.readConfiguration())
+            await session.close()
+        } catch {
+            result = .failure(error)
+        }
+        outcome.withLock { $0 = result }
+        done.signal()
+    }
+    done.wait()
+    switch outcome.withLock({ $0 })! {
+    case .failure(let error):
+        fail("\(error)")
+    case .success(let config):
+        do {
+            try NativeFormat.encode(config).write(to: URL(fileURLWithPath: path))
+        } catch {
+            fail("couldn't save \(path): \(error.localizedDescription)")
+        }
+        let issues = config.validate()
+        print("Read \(config.usedChannelCount) channels, \(config.globalLockouts.count) global lockouts from \(config.metadata.model ?? "?") \(config.metadata.firmware ?? "")")
+        print("\(issues.count { $0.severity == .error }) errors, \(issues.count { $0.severity == .warning }) warnings")
+        for issue in issues.prefix(20) { print("  \(issue.severity == .error ? "error" : "warning"): \(issue.location): \(issue.message)") }
+        print("Saved \(path)")
     }
 }

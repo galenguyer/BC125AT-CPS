@@ -10,10 +10,11 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "BC125ATKit",
-            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("IOUSBHost")]
+            name: "CBC125ATUSB",
+            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation")]
         ),
+        .target(name: "BC125ATKit", dependencies: ["CBC125ATUSB"]),
         .executableTarget(name: "bc125at-cli", dependencies: ["BC125ATKit"]),
-        .testTarget(name: "BC125ATKitTests", dependencies: ["BC125ATKit"]),
+        .testTarget(name: "BC125ATKitTests", dependencies: ["BC125ATKit"], resources: [.copy("Fixtures")]),
     ]
 )
