@@ -17,6 +17,26 @@ public struct ReadProgress: Sendable {
     public var fraction: Double { total == 0 ? 0 : Double(completed) / Double(total) }
 }
 
+public struct WriteReport: Sendable {
+    public struct Failure: Sendable, Identifiable {
+        public var id: Int { step.id }
+        public var step: WritePlan.Step
+        public var reason: String
+    }
+
+    /// Steps the scanner acknowledged with `OK`.
+    public var written: Int
+    /// Steps the scanner rejected (`ERR`/`NG`).
+    public var failures: [Failure]
+    /// Differences still present when the scanner was read back after writing, described as the
+    /// steps that would fix them. Empty when the scanner holds exactly the plan's target.
+    public var mismatches: [WritePlan.Step]
+    /// The scanner's configuration as read back after writing.
+    public var scannerConfig: ScannerConfig
+
+    public var succeeded: Bool { failures.isEmpty && mismatches.isEmpty }
+}
+
 public enum SessionError: Error, Equatable, CustomStringConvertible {
     case unsupportedModel(String)
     /// `PRG,NG`: the scanner is in a menu, Direct Entry, or Quick Save.
@@ -68,17 +88,24 @@ public actor ScannerSession {
     /// Reads the scanner's whole configuration. Always leaves program mode, including on error or
     /// cancellation. The scanner is left in Scan Hold afterwards.
     public func readConfiguration(progress: @Sendable (ReadProgress) -> Void = { _ in }) throws -> ScannerConfig {
-        let identity = try identify()
-        guard identity.model == "BC125AT" else { throw SessionError.unsupportedModel(identity.model) }
-
-        do {
-            try connection.enterProgramMode()
-        } catch .notAllowed {
-            throw SessionError.programModeRefused
-        }
+        let identity = try enterProgramMode()
         defer { try? connection.exitProgramMode() }
+        var completed = 0
+        let total = Self.readSteps
+        return try readAll(identity: identity) {
+            try Task.checkCancellation()
+            completed += 1
+            progress(ReadProgress(completed: completed, total: total))
+        }
+    }
 
-        let total = Self.settingsCommands + 10 + ScannerConfig.channelCount + 1
+    /// Writes `plan`, then reads the whole scanner back to check it (SPEC.md §7). Commands the
+    /// scanner rejects are reported and skipped; transport errors and cancellation stop the write.
+    /// Always leaves program mode.
+    public func write(_ plan: WritePlan, progress: @Sendable (ReadProgress) -> Void = { _ in }) throws -> WriteReport {
+        let identity = try enterProgramMode()
+        defer { try? connection.exitProgramMode() }
+        let total = plan.steps.count + Self.readSteps
         var completed = 0
         func step() throws {
             try Task.checkCancellation()
@@ -86,6 +113,44 @@ public actor ScannerSession {
             progress(ReadProgress(completed: completed, total: total))
         }
 
+        var written = 0
+        var failures: [WriteReport.Failure] = []
+        for planned in plan.steps {
+            do {
+                let reply = try connection.execute(planned.command)
+                if reply == ["OK"] {
+                    written += 1
+                } else {
+                    failures.append(.init(step: planned, reason: "Unexpected reply \(reply.joined(separator: ","))"))
+                }
+            } catch .rejected {
+                failures.append(.init(step: planned, reason: "The scanner rejected the value (ERR)"))
+            } catch .notAllowed {
+                failures.append(.init(step: planned, reason: "The scanner refused the command (NG)"))
+            }
+            try step()
+        }
+
+        let actual = try readAll(identity: identity, step: step)
+        let remaining = WritePlan(from: actual, to: plan.target)
+        return WriteReport(written: written, failures: failures, mismatches: remaining.steps, scannerConfig: actual)
+    }
+
+    private static let readSteps = settingsCommands + 10 + ScannerConfig.channelCount + 1
+
+    private func enterProgramMode() throws -> ScannerIdentity {
+        let identity = try identify()
+        guard identity.model == "BC125AT" else { throw SessionError.unsupportedModel(identity.model) }
+        do {
+            try connection.enterProgramMode()
+        } catch .notAllowed {
+            throw SessionError.programModeRefused
+        }
+        return identity
+    }
+
+    /// Reads every section; the caller handles program mode.
+    private func readAll(identity: ScannerIdentity, step: () throws -> Void) throws -> ScannerConfig {
         var config = ScannerConfig()
         config.metadata = .init(model: identity.model, firmware: identity.firmware, readAt: .now)
         try readSettings(into: &config, step: step)

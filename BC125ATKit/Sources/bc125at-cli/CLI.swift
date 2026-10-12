@@ -13,6 +13,9 @@ let usage = """
       dump                     Read every setting and channel (read-only) and print the raw replies
       read <file.bc125at>      Read the whole configuration with ScannerSession (as the app does)
                                and save it as a .bc125at document
+      write <file.bc125at> [--yes] [--backup <file>]
+                               Show what writing the document would change; with --yes, back up
+                               the scanner (to --backup, if given), write, and verify
       verify [--allow-write]   Run the Phase 0 protocol checks (SPEC.md §10) and print a report.
                                --allow-write also runs round-trip tests that modify, then restore,
                                spare empty channels and a few settings.
@@ -97,6 +100,13 @@ enum CLI {
         if command == "read" {
             guard let path = arguments.first else { fail("read needs an output file") }
             readDocument(to: path)
+            exit(0)
+        }
+        if command == "write" {
+            let confirmed = takeFlag("--yes")
+            let backup = takeOption("--backup")
+            guard let path = arguments.first else { fail("write needs a .bc125at file") }
+            writeDocument(from: path, confirmed: confirmed, backupPath: backup)
             exit(0)
         }
 
@@ -185,36 +195,81 @@ enum CLI {
     }
 }
 
-/// Runs `ScannerSession.readConfiguration` — the app's read path — and saves the result.
-func readDocument(to path: String) {
+/// Runs async work from the synchronous CLI. The session runs on its own queue, so blocking the
+/// main thread here is fine.
+func runBlocking<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) -> T {
     let done = DispatchSemaphore(value: 0)
-    let outcome = Mutex<Result<ScannerConfig, any Error>?>(nil)
+    let outcome = Mutex<Result<T, any Error>?>(nil)
     Task {
-        let result: Result<ScannerConfig, any Error>
-        do {
-            let session = try ScannerSession.open()
-            result = .success(try await session.readConfiguration())
-            await session.close()
-        } catch {
-            result = .failure(error)
-        }
+        let result: Result<T, any Error>
+        do { result = .success(try await work()) } catch { result = .failure(error) }
         outcome.withLock { $0 = result }
         done.signal()
     }
     done.wait()
     switch outcome.withLock({ $0 })! {
-    case .failure(let error):
-        fail("\(error)")
-    case .success(let config):
-        do {
-            try NativeFormat.encode(config).write(to: URL(fileURLWithPath: path))
-        } catch {
-            fail("couldn't save \(path): \(error.localizedDescription)")
-        }
-        let issues = config.validate()
-        print("Read \(config.usedChannelCount) channels, \(config.globalLockouts.count) global lockouts from \(config.metadata.model ?? "?") \(config.metadata.firmware ?? "")")
-        print("\(issues.count { $0.severity == .error }) errors, \(issues.count { $0.severity == .warning }) warnings")
-        for issue in issues.prefix(20) { print("  \(issue.severity == .error ? "error" : "warning"): \(issue.location): \(issue.message)") }
-        print("Saved \(path)")
+    case .success(let value): return value
+    case .failure(let error): fail("\(error)")
+    }
+}
+
+/// Runs `ScannerSession.readConfiguration` — the app's read path — and saves the result.
+func readDocument(to path: String) {
+    let config = runBlocking {
+        let session = try ScannerSession.open()
+        defer { Task { await session.close() } }
+        return try await session.readConfiguration()
+    }
+    save(config, to: path)
+    let issues = config.validate()
+    print("Read \(config.usedChannelCount) channels, \(config.globalLockouts.count) global lockouts from \(config.metadata.model ?? "?") \(config.metadata.firmware ?? "")")
+    print("\(issues.count { $0.severity == .error }) errors, \(issues.count { $0.severity == .warning }) warnings")
+    for issue in issues.prefix(20) { print("  \(issue.severity == .error ? "error" : "warning"): \(issue.location): \(issue.message)") }
+    print("Saved \(path)")
+}
+
+/// The app's write path (SPEC.md §7): validate, read, plan, back up, write, verify.
+func writeDocument(from path: String, confirmed: Bool, backupPath: String?) {
+    let document: ScannerConfig
+    do {
+        document = try NativeFormat.decode(Data(contentsOf: URL(fileURLWithPath: path)))
+    } catch {
+        fail("couldn't open \(path): \(error)")
+    }
+    let errors = document.validate().filter { $0.severity == .error }
+    guard errors.isEmpty else {
+        for issue in errors { print("error: \(issue.location): \(issue.message)") }
+        fail("\(errors.count) errors; fix them before writing")
+    }
+    let current = runBlocking {
+        let session = try ScannerSession.open()
+        defer { Task { await session.close() } }
+        return try await session.readConfiguration()
+    }
+    let plan = WritePlan(from: current, to: document)
+    for adjustment in plan.adjustments { print("note: \(adjustment.title): \(adjustment.detail)") }
+    guard !plan.isEmpty else { print("The scanner already matches \(path)."); return }
+    for section in WritePlan.Section.allCases where !plan.steps(in: section).isEmpty {
+        print("\(section.rawValue):")
+        for step in plan.steps(in: section) { print("  \(step.title): \(step.detail)    [\(step.command)]") }
+    }
+    guard confirmed else { print("\(plan.steps.count) changes. Run again with --yes to write them."); return }
+    if let backupPath { save(current, to: backupPath); print("Backed up the scanner to \(backupPath)") }
+    let report = runBlocking {
+        let session = try ScannerSession.open()
+        defer { Task { await session.close() } }
+        return try await session.write(plan)
+    }
+    print("Wrote \(report.written) of \(plan.steps.count) changes.")
+    for failure in report.failures { print("failed: \(failure.step.title): \(failure.reason)") }
+    for mismatch in report.mismatches { print("mismatch after read-back: \(mismatch.title): \(mismatch.detail)") }
+    print(report.succeeded ? "Verified: the scanner matches the document." : "The scanner does NOT fully match the document.")
+}
+
+func save(_ config: ScannerConfig, to path: String) {
+    do {
+        try NativeFormat.encode(config).write(to: URL(fileURLWithPath: path))
+    } catch {
+        fail("couldn't save \(path): \(error.localizedDescription)")
     }
 }
