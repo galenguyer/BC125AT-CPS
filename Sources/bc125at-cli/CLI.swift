@@ -15,6 +15,14 @@ let usage = """
                                --allow-write also runs round-trip tests that modify, then restore,
                                spare empty channels and a few settings.
       release                  Send EPG to take a stuck scanner out of program mode
+      probe freq <from> <to> <step> [--mod M]
+      probe freq --values <f1,f2,...> [--mod M] [--spread N]
+                               Write each frequency (100 Hz units) to a spare empty channel and
+                               print what the scanner stores, as CSV. --spread N rotates writes
+                               across N empty channels. Restores every channel used.
+      probe lockouts [--start F] [--step S] [--limit N]
+                               Add global lockouts until the scanner refuses one, report the
+                               capacity, then remove everything that was added.
 
     options:
       --log <file>             Write a transcript of every command and reply to <file>
@@ -24,6 +32,19 @@ let usage = """
 let interrupted = Atomic<Bool>(false)
 
 struct Interrupted: Error {}
+
+/// Routes Ctrl-C to `interrupted` instead of killing the process, so the command in flight
+/// finishes and cleanup (restoring channels, `EPG`) still runs.
+///
+/// `nonisolated` matters: a handler closure formed inside `@MainActor` code is main-actor
+/// isolated, and Swift traps (SIGTRAP, exit 133) when the signal source runs it on another queue.
+nonisolated func installInterruptHandler() -> any DispatchSourceSignal {
+    signal(SIGINT, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+    source.setEventHandler { interrupted.store(true, ordering: .relaxed) }
+    source.resume()
+    return source
+}
 
 func checkInterrupted() throws {
     if interrupted.load(ordering: .relaxed) { throw Interrupted() }
@@ -59,10 +80,8 @@ enum CLI {
         guard let command = arguments.first else { print(usage); exit(0) }
         arguments.removeFirst()
 
-        signal(SIGINT, SIG_IGN)
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-        sigint.setEventHandler { interrupted.store(true, ordering: .relaxed) }
-        sigint.resume()
+        let sigint = installInterruptHandler()
+        defer { sigint.cancel() }
 
         if command == "list" {
             let devices = USBTransport.connectedDevices()
@@ -119,6 +138,26 @@ enum CLI {
 
             case "release":
                 print(try connection.send("EPG"))
+
+            case "probe":
+                let modulation = takeOption("--mod") ?? "AUTO"
+                let values = takeOption("--values")
+                let start = takeOption("--start").flatMap { Int($0) } ?? 4500000
+                let step = takeOption("--step").flatMap { Int($0) } ?? 125
+                let limit = takeOption("--limit").flatMap { Int($0) } ?? 1500
+                let spread = takeOption("--spread").flatMap { Int($0) } ?? 1
+                switch arguments.first {
+                case "freq":
+                    let numbers = (values.map { $0.split(separator: ",").map(String.init) } ?? Array(arguments.dropFirst())).compactMap { Int($0) }
+                    let frequencies = values != nil ? numbers
+                        : numbers.count == 3 ? Array(stride(from: numbers[0], through: numbers[1], by: numbers[2])) : []
+                    guard !frequencies.isEmpty else { fail("probe freq needs <from> <to> <step> or --values") }
+                    try Probe.frequencies(frequencies, modulation: modulation, spread: spread, connection: connection)
+                case "lockouts":
+                    try Probe.lockoutCapacity(start: start, step: step, limit: limit, connection: connection)
+                default:
+                    fail("probe needs freq or lockouts")
+                }
 
             default:
                 print(usage)

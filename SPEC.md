@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** Draft v0.4 (Phase 0 results in) · 2026-10-12  
+**Status:** Draft v0.5 (Phase 0 complete) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -44,7 +44,7 @@ The transport is `USBTransport` in `BC125ATKit`.
 
 ## 3. Protocol Reference
 
-> **Phase 0 status:** every item that was marked *verify* has now been tested on hardware (`phase0/REPORT.md`); the results are written in below. The only item still open is the exact step rule in §3.5.
+> **Phase 0 status:** every item that was marked *verify* has now been tested on hardware (`phase0/REPORT.md`); the results are written in below. The step plan (§3.5) and lockout capacity (§3.3) were measured afterwards.
 >
 > **Source:** Uniden's *BC125AT Operation Specification*, Appendix C "PC programming Command" (pp. 54–63; a copy is in the bc125py repo at `docs/BC125AT_Protocol.pdf`), cross-checked against bc125py (MIT, commit `b9454ca`, 2026-01-03). Wherever the hardware disagreed with Uniden's document, the hardware wins, and the row says so.
 
@@ -120,7 +120,7 @@ Any other value, such as `1–63`, `114–126`, or `232–239`, is invalid. bc12
 - **`GLF,0` resets the cursor** (reply `GLF,OK`; tested). The app uses this. bc125py's `EPG`+`PRG` approach also works, but it takes the scanner out of program mode for a moment.
 - Writing compares the lists and sends only the needed `ULF`/`LOF` commands. bc125py instead unlocks everything and locks the full list again.
 - Lockout replies are zero-padded like `CIN` (`GLF,04069875`).
-- The maximum number of lockouts is still unknown. Testing it would mean adding hundreds of temporary entries, so it wasn't done. The app reports `LOF` errors if the list fills up.
+- **The list holds 100 frequencies.** Once it's full, `LOF` still replies `LOF,OK` but **silently drops the new entry**; the existing 100 are kept. The app enforces the 100-entry limit itself and checks every `LOF` by re-reading the list.
 
 ### 3.4 Bit masks: watch the polarity
 
@@ -136,25 +136,37 @@ Any other value, such as `1–63`, `114–126`, or `232–239`, is invalid. bc12
 ### 3.5 Valid frequency ranges and steps
 25.0000–54.0000, 108.0000–174.0000, 225.0000–380.0000, and 400.0000–512.0000 MHz, inclusive. Tested: `5120000` was accepted, while `5120100` and `600000` (60 MHz, in a gap) got `CIN,ERR`.
 
-**In-range frequencies that aren't on the scanner's step grid are accepted (`CIN,OK`) and silently snapped:**
+**Every channel frequency is snapped to a fixed band plan.** An in-range frequency that isn't on the plan is still accepted (`CIN,OK`), but it's stored as the nearest valid point.
 
-| Sent | Stored | Note |
+The rules, measured on firmware 1.06.06:
+1. **Valid points** are `start + n × step` within each segment of the table below, truncated to 100 Hz. That's why 8.33 kHz points read back as `…0083`, `…0166`, `…0250`, and 6.25 kHz points as `…0062`, `…0125`, `…0187`.
+2. **Snapping:** any other frequency is stored as the nearest valid point. **Exact ties round up** (tested in five bands).
+3. **Exception, 137–174 MHz only:** a frequency that is an exact multiple of 5 kHz is **kept as sent**, even off-plan (e.g. 162.5050 is kept, although the plan there is 7.5 kHz). This doesn't apply in other bands: 118.0050 → 118.0083 and 406.0050 → 406.0062.
+
+| Range (MHz) | Step | Notes |
 |---|---|---|
-| 25.0050 | 25.0050 | kept (5 kHz) |
-| 118.0083 | 118.0083 | kept (8.33 kHz air) |
-| 118.0050 | 118.0083 | snapped onto the 8.33 kHz grid |
-| 154.0062 | 154.0025 | |
-| 154.0063 | 154.0100 | |
-| 162.5510 | 162.5475 | |
-| 162.5525 | 162.5550 | |
-| 406.0125 | 406.0125 | kept (12.5 kHz) |
-| 406.0050 | 406.0062 | snapped onto a 6.25 kHz grid (406.00625 truncated to 100 Hz) |
+| 25.0000–54.0000 | 5 kHz | |
+| 108.0000–137.0000 | 8.33 kHz | Air band |
+| 137.0000–150.7750 | 5 kHz | |
+| 150.7750–174.0000 | mostly 7.5 kHz, then 12.5 kHz from 163.25 | about 20 segments, each with its own starting point, following FCC channel plans. Examples: the 154.45625–154.47875 offset channels, 5 kHz runs at 154.515–154.525 and 157.450–157.470, and lone channels 173.20375 and 173.39625. The full table is `phase0/band-plan.json` |
+| 225.0000–380.0000 | 12.5 kHz | |
+| 400.0000–512.0000 | 6.25 kHz | |
 
-The VHF-high results don't fit a single grid, so the step rule is **still open**. Each band probably has its own step plan, which would explain why Close Call splits VHF into High1 and High2. Until the rule is known:
-- The app never assumes a frequency is stored as typed. Every write is read back (§7), and any frequency the scanner snapped is shown in the result: "Channel 12: 154.0062 was stored as 154.0025".
-- Once the rule is derived, the editor warns *before* writing.
+**How it was measured, and how sure we are:**
 
-Proposed follow-up: a **step sweep** on one spare channel that writes every 100 Hz value across a 25 kHz window in each band (about 250 writes per band) and records what's stored. That's enough to derive the grids exactly. It's held back because it's about 1,500 writes to the scanner's memory, so it needs your OK.
+| Range | Evidence | Confidence |
+|---|---|---|
+| 137–174 MHz | A gap test on every pair of neighbouring grid points: a write just below each midpoint must read back as the lower point, so any extra or missing point would show up. All 5,363 gaps passed, and `band-plan.json` reproduces all 5,364 points | Exact |
+| 25–54 MHz | Same gap test, all 5,800 gaps | Exact |
+| 108–125.43 MHz | Same gap test, about 2,090 gaps | Exact |
+| 125.43–137, 225–380, 400–512 MHz | 4–9 windows per band, each 25 kHz, sampled every 700 Hz. All matched a single regular grid. The full gap test was stopped as not worth about 32,000 more writes | Sampled |
+
+In the sampled bands, an undiscovered irregular segment is possible but unlikely. If one exists, read-back (§7) catches it.
+
+**How the app uses this:**
+- `BandPlan` in `BC125ATKit` carries the table and predicts what the scanner will store for any frequency.
+- The channel editor shows the predicted value and warns *before* writing ("154.0062 will be stored as 154.0025").
+- Every write is still read back (§7). If the stored value doesn't match the prediction, the result reports it.
 
 ### 3.6 Factory default custom search ranges
 From bc125py's defaults. **These match the tested scanner's `CSP` readout exactly.** The app uses these as the defaults for a new, empty document:
@@ -279,7 +291,7 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 - **Hardware tests** are opt-in. They're gated by an environment variable, run against a real BC125AT, and limited to read-only commands unless `BC125AT_ALLOW_WRITE=1` is set.
 
 ## 10. Milestones
-0. ✅ **Protocol verification** (done 2026-10-12; `phase0/REPORT.md`; the step sweep in §3.5 is pending): a small CLI in the package (`bc125at-cli info|dump|raw <cmd>`) that confirms the macOS driver works (or proves the IOUSBHost fallback is needed) and checks every **verify** item in §2–3 on real hardware. It reads only by default. `--allow-write` adds round-trip tests on two empty channels and a few settings; each change is restored and read back.
+0. ✅ **Protocol verification** (done 2026-10-12; `phase0/REPORT.md` and `phase0/band-plan.json`): a small CLI in the package (`bc125at-cli info|dump|raw|verify|probe`) that confirms the macOS driver works (or proves the IOUSBHost fallback is needed) and checks every **verify** item in §2–3 on real hardware. It reads only by default. `--allow-write` adds round-trip tests on two empty channels and a few settings; each change is restored and read back.
 1. **Kit**: transport, protocol, model, validation, native and CSV formats, and the mock transport, all with tests.
 2. **Read-only app**: document app, channel table, and Read from Scanner.
 3. **Editing**: all editors, validation in the UI, undo, and copy/paste.
@@ -303,4 +315,3 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 ## 12. Open Questions
 1. Sample files from Uniden's own software are needed before milestone 6. bc125py's `.125at` files are its own command scripts, not Uniden's format.
 2. Should the app also accept the BC126AT, the international version? bc125py looks for it by name, and it probably uses the same protocol. If yes, accept `MDL,BC126AT` and check whether its frequency ranges differ.
-3. May we run the frequency **step sweep** (§3.5)? It's about 1,500 writes to one spare channel.

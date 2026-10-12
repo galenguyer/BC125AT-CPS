@@ -1,0 +1,29 @@
+{
+  "description": "BC125AT channel step plan, measured on firmware 1.06.06 (SPEC.md §3.5). Valid points are start + n*step (Hz) for start <= f <= end, truncated to 100 Hz. Off-plan frequencies snap to the nearest valid point, ties rounding up. In 137-174 MHz, exact multiples of 5 kHz are also kept as sent.",
+  "keepExact5kHz": [[137000000, 174000000]],
+  "segments": [
+    {"start": 25000000,  "end": 54000000,  "step": 5000},
+    {"start": 108000000, "end": 137000000, "step": 8333.333333333333},
+    {"start": 137000000, "end": 150775000, "step": 5000},
+    {"start": 150775000, "end": 150812500, "step": 7500},
+    {"start": 150815000, "end": 154452500, "step": 7500},
+    {"start": 154456250, "end": 154478750, "step": 7500},
+    {"start": 154482500, "end": 154512500, "step": 7500},
+    {"start": 154515000, "end": 154525000, "step": 5000},
+    {"start": 154527500, "end": 154535000, "step": 7500},
+    {"start": 154540000, "end": 154607500, "step": 7500},
+    {"start": 154610000, "end": 154647500, "step": 7500},
+    {"start": 154650000, "end": 157447500, "step": 7500},
+    {"start": 157450000, "end": 157470000, "step": 5000},
+    {"start": 157470000, "end": 163245000, "step": 7500},
+    {"start": 163250000, "end": 173200000, "step": 12500},
+    {"start": 173203750, "end": 173203750, "step": 0},
+    {"start": 173210000, "end": 173225000, "step": 5000},
+    {"start": 173225000, "end": 173387500, "step": 12500},
+    {"start": 173390000, "end": 173390000, "step": 0},
+    {"start": 173396250, "end": 173396250, "step": 0},
+    {"start": 173400000, "end": 174000000, "step": 5000},
+    {"start": 225000000, "end": 380000000, "step": 12500},
+    {"start": 400000000, "end": 512000000, "step": 6250}
+  ]
+}

@@ -52,3 +52,15 @@ After the write tests, a full `dump` was byte-identical to the backup taken befo
 | §3.3 | GLF,0 resets the cursor | ✅ matches spec | `GLF,0` → `GLF,OK`, then `GLF` → `GLF,04069875` (first is `04069875`) |
 | §3.3 | EPG+PRG resets the cursor (bc125py) | ✅ matches spec | then `GLF` → `GLF,04069875` |
 | §3 | VOL/SQL after EPG | ✅ matches spec | `VOL,1`, `SQL,4` |
+
+## Follow-up: step plan and lockout capacity (SPEC.md §3.3, §3.5)
+
+Measured with `bc125at-cli probe`. All writes went to empty channels, rotating across up to 100 of them to spread wear, and each channel was cleared with `DCH` afterwards. A final full `dump` was byte-identical to the backup.
+
+- **Survey:** 43 windows of 25 kHz across all four bands, sampled every 700 Hz (1,548 writes). The result: one regular grid each in 25–54, 108–137, 137–150.775, 225–380, and 400–512 MHz, and a patchwork in 150.775–174 MHz.
+- **VHF-high map:** two probe writes per 25 kHz window from 137 to 174 MHz (+100 Hz and +3.8 kHz, chosen so their results tell every candidate grid apart), plus a check of the exact-5 kHz rule in every fourth window (3,330 writes). Each place where the grid changed was then sampled every 700 Hz (1,155 writes).
+- **Gap verification:** for each pair of neighbouring predicted grid points, one write just below their midpoint; the reply must be the lower point. 137–174 MHz: 5,363 gaps, and the only mismatches were 9 points I had wrongly included in the prediction (exact 5 kHz values, which are kept as sent but aren't snap targets). 25–54 MHz and 108–125.43 MHz: 7,892 gaps, no mismatches. The full run over the remaining bands was stopped early on purpose.
+- **Ties:** 30.0025, 140.0025, 173.4025, 108.0208, 400.0031, 450.0031, and 154.4806 MHz all rounded **up**.
+- **`phase0/band-plan.json`** holds the resulting 23-segment table. It reproduces all 5,364 verified VHF-high points exactly.
+- **Global lockouts:** capacity is **100**. `LOF` replies `LOF,OK` to every add, but once the list is full, new entries are dropped and the first 100 are kept (tested with 101 and with 1,500 adds).
+- **Incident:** stopping the full sweep with Ctrl-C crashed the CLI (exit 133, SIGTRAP). The Ctrl-C handler closure was created inside `@MainActor` code and run on a background dispatch queue, which Swift 6 traps at runtime. The crash left 100 test channels filled and the scanner in program mode. They were cleared by diffing against the backup, and only channels that were empty in the backup were deleted. The handler is now installed from a `nonisolated` function, and Ctrl-C has been retested to exit cleanly and restore the channels.
