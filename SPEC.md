@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** v0.7 (milestones 0–4 complete) · 2026-10-12  
+**Status:** v0.8 (milestones 0–5 complete) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -246,7 +246,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - The app is sandboxed with the **`com.apple.security.device.usb`** entitlement and user-selected file read/write access. Verified: the ad-hoc-signed, sandboxed app reads the scanner, but only through IOUSBLib (§2).
 - It's distributed as a zipped `.app` attached to GitHub Releases. It isn't on the Mac App Store.
 - **No paid Apple Developer account yet**, so release builds are **ad-hoc signed and not notarized**. The README will explain how to get past Gatekeeper: on macOS 15, open System Settings → Privacy & Security → "Open Anyway", or run `xattr -dr com.apple.quarantine`. If we sign up for a developer account later, the only change is adding a Developer ID signing and `notarytool` step to the release script.
-- Releases are built by a local script, `scripts/release.sh`, that runs `xcodebuild archive`, signs ad-hoc, and zips the app. CI on GitHub Actions can come later, once the repo is published.
+- Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, signed ad hoc **with the hardened runtime**, checks the signature and the three entitlements, builds a universal `bc125at-cli`, and writes `dist/BC125AT-CPS-<version>.zip`, `dist/bc125at-cli-<version>-macos.zip` and `SHA256SUMS-<version>.txt`. Setting `DEVELOPER_ID` and `NOTARY_PROFILE` switches to Developer ID signing and notarization (written but untested, since there's no account yet). Verified: a quarantined download is `rejected` by Gatekeeper, as the README's instructions expect, and the released app reads the scanner normally. CI on GitHub Actions can come later, once the repo is published.
 
 ### 6.4 Building and testing
 - Kit and CLI: `cd BC125ATKit && swift test` runs the 40 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
@@ -273,7 +273,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - **Sidebar**: Channels (with banks 1–10 nested, each showing its scan-enabled toggle and a count of channels in use), Search & Close Call, Global Lockouts, Settings.
 - **Detail**: the editor for the selected section.
 - **Toolbar**: connection status (scanner name, firmware, connected or disconnected), Read, Write, and a Validation issue count that opens an issues popover.
-- **Inspector** (optional, ⌥⌘I): full details for the selected channel or channels.
+- **Inspector** (⌥⌘I, toolbar button): with one channel selected, every field as an editor, plus the value the scanner will store and the channel's issues. With several selected, counts and "Change All" menus for modulation, tone, delay and lockout.
 
 ### 8.2 Channel table
 - A SwiftUI `Table` that shows all 500 rows or one bank, with sortable columns.
@@ -282,7 +282,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Making a channel priority clears the other priority channel in its bank, as the scanner itself would.
 - Typing a frequency into an empty row creates an active channel (empty channels are locked out on the scanner); clearing a frequency empties the channel. Text cells commit on Return or when focus leaves, so each edit is one undo step.
 - Copy, cut and paste use TSV on the pasteboard (`ChannelClipboard`), so they work with Numbers and Excel. Pasting starts at the first selected channel and fills consecutive slots, stopping at 500. Pasted text may have a header row (columns matched by name, as for CSV), or be in Name, Frequency, Modulation, Tone, Delay, Lockout, Priority order, or be a single column of frequencies.
-- *(Milestone 5)* Rows can be dragged to reorder within or between banks. Moving a channel moves its whole record. Until then, cut and paste does the same job.
+- Rows can be dragged (one or several) onto another row, which moves them to consecutive slots starting there. Channels already in those slots aren't lost; they move into the slots that were vacated (`ScannerConfig.moveChannels`). Dropping onto a bank in the sidebar moves them into that bank's first empty slots, or beeps if there isn't room. Dragging into a *different* document's window copies the channels instead, since channel numbers mean nothing there. Each drop is one undo step.
 - Cmd-F filters by name or frequency.
 - Every edit can be undone through the document's `UndoManager`.
 
@@ -299,7 +299,9 @@ Backlight, key beep, key lock, contrast, battery charge time (with bc125py's sug
 When connected but not in program mode, show volume and squelch sliders (`VOL`/`SQL` work outside program mode). The BC125AT has no status command (no `GLG`/`STS`), so there's no display of what it's receiving.
 
 ### 8.7 Platform polish
-Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels on the table, menu commands with keyboard shortcuts, and a Settings scene for app preferences (backup retention, timeouts).
+Light and dark mode, menu commands with keyboard shortcuts, and a Settings window (⌘,) for backup retention. App icon in `App/Sources/Assets.xcassets`, drawn by `scripts/make-icon.swift`.
+
+**VoiceOver:** text cells are labelled ("Channel 12 name"). Inside a `Table`, SwiftUI drops accessibility labels from pickers and checkboxes, and from header text, so those cells are announced with their column header. That's why the headers are spelled out (Modulation, Lockout, Priority) rather than abbreviated. The inspector gives every field a normal form label.
 
 ## 9. Testing
 - **Unit tests** cover encoding and decoding every command and its edge cases, the tone code tables, frequency parsing and formatting, validation, CSV round-trips, and diffs.
@@ -312,7 +314,7 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 2. ✅ **Read-only app**: document app (`.bc125at`), channel table (all channels or per bank, search, show/hide empty, issue badges), read-only Settings / Search & Close Call / Global Lockouts views, an issues popover, connection status with hot-plug detection, Read from Scanner, and Release Scanner. Verified end to end against a real BC125AT in the sandboxed, ad-hoc-signed app.
 3. ✅ **Editing**: inline channel editing, bulk edits, copy/cut/paste, Delete, editable Settings (including bank names and scan flags), Search & Close Call and Global Lockouts, validation shown inline, undo for every edit, and CSV import/export (File menu).
 4. ✅ **Write**: diff review, writing only changes, read-back checks, and backups. Verified against a real BC125AT: from the CLI (5 changes, then restoring the original) and from the app (pasting channels, an off-plan frequency that was adjusted, clearing channels, and the up-to-date case). Each test ended with a dump identical to the backup.
-5. **Polish**: drag reordering, inspector, accessibility, app icon, release script, README.
+5. ✅ **Polish**: drag reordering (within a table, onto a sidebar bank, and between documents), inspector, VoiceOver labelling, app icon, Settings window, release script, README and NOTICE.
 6. **Uniden import**: open `.bc125at_ss` files (needs sample files).
 
 ## 11. Decisions

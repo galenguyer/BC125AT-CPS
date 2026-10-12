@@ -36,6 +36,16 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>net.k9fgt.bc125at.channel-drag</string>
+			<key>UTTypeDescription</key>
+			<string>BC125AT Channels</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

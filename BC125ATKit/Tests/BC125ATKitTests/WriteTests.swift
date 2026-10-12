@@ -150,3 +150,56 @@ import Testing
         #expect(pasted?.compactMap(\.frequency).map(\.megahertzString) == ["162.4000", "162.4250", "162.4500"])
     }
 }
+
+@Suite struct ChannelMoveTests {
+    func numbered(_ count: Int) -> ScannerConfig {
+        var config = ScannerConfig()
+        for n in 1...count { config[channel: n] = Channel(name: "C\(n)", frequency: Frequency(hundredHz: UInt32(1_500_000 + n * 50))) }
+        return config
+    }
+
+    func names(_ config: ScannerConfig, _ range: ClosedRange<Int>) -> [String] {
+        range.map { config[channel: $0].isEmpty ? "-" : config[channel: $0].name }
+    }
+
+    @Test func movesDownAndSwapsDisplacedIntoTheGap() {
+        var config = numbered(6)
+        #expect(config.moveChannels([2, 3], to: 5) == [5, 6])
+        #expect(names(config, 1...7) == ["C1", "C5", "C6", "C4", "C2", "C3", "-"])
+    }
+
+    @Test func overlappingMoveKeepsEveryChannel() {
+        var config = numbered(5)
+        config.moveChannels([1, 2], to: 2)
+        #expect(names(config, 1...5) == ["C3", "C1", "C2", "C4", "C5"])
+        #expect(Set(names(config, 1...5)) == Set((1...5).map { "C\($0)" }))
+    }
+
+    @Test func movingIntoEmptySlotsLeavesGaps() {
+        var config = numbered(3)
+        config.moveChannels([1], to: 10)
+        #expect(names(config, 1...3) == ["-", "C2", "C3"])
+        #expect(config[channel: 10].name == "C1")
+    }
+
+    @Test func clipsAtTheLastChannel() {
+        var config = numbered(3)
+        #expect(config.moveChannels([1, 2, 3], to: 499) == [499, 500])
+        #expect(config[channel: 499].name == "C1" && config[channel: 500].name == "C2" && config[channel: 3].name == "C3")
+    }
+
+    @Test func intoBankUsesFirstEmptySlots() {
+        var config = numbered(3)
+        config[channel: 51] = Channel(name: "B2", frequency: Frequency(parsing: "160"))
+        #expect(config.moveChannels([1, 3], intoBank: 2) == [52, 53])
+        #expect(names(config, 1...3) == ["-", "C2", "-"])
+        #expect(names(config, 51...53) == ["B2", "C1", "C3"])
+    }
+
+    @Test func intoFullBankChangesNothing() {
+        var config = numbered(100)
+        let before = config
+        #expect(config.moveChannels([1], intoBank: 2) == nil)
+        #expect(config == before)
+    }
+}

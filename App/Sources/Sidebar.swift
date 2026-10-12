@@ -1,3 +1,4 @@
+import AppKit
 import BC125ATKit
 import SwiftUI
 
@@ -5,6 +6,7 @@ struct Sidebar: View {
     @Binding var config: ScannerConfig
     var issues: [ValidationIssue]
     @Binding var selection: SidebarItem?
+    var window: UUID
 
     var body: some View {
         List(selection: $selection) {
@@ -18,6 +20,9 @@ struct Sidebar: View {
                         .contextMenu {
                             Toggle("Include in Scan", isOn: $config.bankScanEnabled[bank - 1])
                         }
+                        .dropDestination(for: ChannelDrag.self) { items, _ in
+                            dropIntoBank(items, bank: bank)
+                        }
                 }
             }
             Section("Scanner") {
@@ -30,6 +35,21 @@ struct Sidebar: View {
                     .tag(SidebarItem.settings)
             }
         }
+    }
+
+    /// Dropping channels on a bank moves them (or copies them, from another document) into that
+    /// bank's first empty slots. Refuses with a beep if there isn't room.
+    private func dropIntoBank(_ items: [ChannelDrag], bank: Int) -> Bool {
+        var updated = config
+        if items.allSatisfy({ $0.source == window }) {
+            guard updated.moveChannels(items.map(\.number), intoBank: bank) != nil else { NSSound.beep(); return false }
+        } else {
+            let free = Channel.channels(inBank: bank).filter { updated[channel: $0].isEmpty }
+            guard free.count >= items.count else { NSSound.beep(); return false }
+            for (slot, item) in zip(free, items.sorted { $0.number < $1.number }) { updated[channel: slot] = item.channel }
+        }
+        config = updated
+        return true
     }
 
     private func bankHasErrors(_ bank: Int) -> Bool {

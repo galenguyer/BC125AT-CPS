@@ -13,6 +13,31 @@ struct BC125ATCPSApp: App {
         .commands {
             ScannerCommands(monitor: monitor)
         }
+        Settings {
+            AppSettingsView()
+        }
+    }
+}
+
+/// App preferences (⌘,).
+struct AppSettingsView: View {
+    @AppStorage(BackupStore.retentionKey) private var retention = BackupStore.defaultRetention
+
+    var body: some View {
+        Form {
+            Section {
+                Stepper("Keep the newest \(retention) backups", value: $retention, in: 10...500, step: 10)
+                Button("Show Backups in Finder") { BackupStore.reveal() }
+            } header: {
+                Text("Backups")
+            } footer: {
+                Text("Before every write, the scanner's current contents are saved as a .bc125at file you can open and write back.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

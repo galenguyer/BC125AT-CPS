@@ -18,84 +18,44 @@ struct ChannelTableView: View {
     var numbers: [Int]
     var issues: [ValidationIssue]
     var title: String
+    /// Identifies this document window, so drags can tell a move from a copy between documents.
+    var window: UUID
 
     @AppStorage("showEmptyChannels") private var showEmptyChannels = false
+    @AppStorage("showInspector") private var showInspector = false
     @State private var searchText = ""
     @State private var selection = Set<Int>()
     @State private var sortOrder = [KeyPathComparator(\ChannelRow.number)]
 
     var body: some View {
         let rows = makeRows()
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("") { row in
-                if let worst = row.issues.map(\.severity).max() {
-                    IssueIcon(severity: worst)
-                        .help(row.issues.map(\.message).joined(separator: "\n"))
-                }
-            }
-            .width(18)
-            TableColumn("#", value: \.number) { row in
-                Text("\(row.number)").monospacedDigit().foregroundStyle(.secondary)
-            }
-            .width(min: 32, ideal: 40, max: 50)
-            TableColumn("Name", value: \.channel.name) { row in
-                CommitTextField(title: row.channel.isEmpty ? "" : "No name", value: row.channel.name) { text in
-                    edit(row.number) { $0.name = text }
-                    return true
-                }
-                .disabled(row.channel.isEmpty)
-            }
-            .width(min: 100, ideal: 150)
-            TableColumn("Frequency (MHz)", value: \.frequencyText) { row in
-                FrequencyField(title: row.channel.isEmpty ? "Add…" : "MHz", frequency: row.channel.frequency, allowsEmpty: true) { frequency in
-                    config.setFrequency(frequency, ofChannel: row.number)
-                }
-            }
-            .width(min: 90, ideal: 110)
-            TableColumn("Mod") { row in
-                if !row.channel.isEmpty {
-                    Picker("Modulation", selection: channelBinding(row.number, \.modulation)) {
-                        ForEach(Modulation.allCases, id: \.self) { Text($0.displayName).tag($0) }
+        Table(of: ChannelRow.self, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("") { row in issueCell(row) }
+                .width(18)
+            TableColumn("#", value: \.number) { row in numberCell(row) }
+                .width(min: 32, ideal: 40, max: 50)
+            TableColumn("Name", value: \.channel.name) { row in nameCell(row) }
+                .width(min: 100, ideal: 150)
+            TableColumn("Frequency (MHz)", value: \.frequencyText) { row in frequencyCell(row) }
+                .width(min: 90, ideal: 110)
+            TableColumn("Modulation") { row in modulationCell(row) }
+                .width(min: 75, ideal: 85)
+            TableColumn("Tone") { row in toneCell(row) }
+                .width(min: 80, ideal: 105)
+            TableColumn("Delay") { row in delayCell(row) }
+                .width(min: 60, ideal: 70)
+            TableColumn("Lockout") { row in lockoutCell(row) }
+                .width(min: 50, ideal: 55)
+            TableColumn("Priority") { row in priorityCell(row) }
+                .width(min: 50, ideal: 55)
+        } rows: {
+            ForEach(rows) { row in
+                TableRow(row)
+                    .draggable(ChannelDrag(number: row.number, channel: row.channel, source: window))
+                    .dropDestination(for: ChannelDrag.self) { items in
+                        drop(items, at: row.number)
                     }
-                    .labelsHidden()
-                }
             }
-            .width(min: 60, ideal: 70)
-            TableColumn("Tone") { row in
-                if !row.channel.isEmpty {
-                    Menu(row.channel.tone.displayName) {
-                        ToneMenuItems { tone in edit(row.number) { $0.tone = tone } }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-            }
-            .width(min: 80, ideal: 105)
-            TableColumn("Delay") { row in
-                if !row.channel.isEmpty {
-                    Picker("Delay", selection: channelBinding(row.number, \.delay)) {
-                        ForEach(Delay.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                    }
-                    .labelsHidden()
-                }
-            }
-            .width(min: 60, ideal: 70)
-            TableColumn("L/O") { row in
-                if !row.channel.isEmpty {
-                    Toggle("Locked out", isOn: channelBinding(row.number, \.lockedOut))
-                        .labelsHidden()
-                        .help("Skip this channel when scanning")
-                }
-            }
-            .width(min: 28, ideal: 32)
-            TableColumn("Pri") { row in
-                if !row.channel.isEmpty {
-                    Toggle("Priority", isOn: channelBinding(row.number, \.priority))
-                        .labelsHidden()
-                        .help("Priority channel (one per bank)")
-                }
-            }
-            .width(min: 28, ideal: 32)
         }
         .contextMenu(forSelectionType: Int.self) { numbers in
             if !numbers.isEmpty { bulkMenu(for: numbers) }
@@ -125,6 +85,108 @@ struct ChannelTableView: View {
                 Toggle("Show Empty Channels", systemImage: "eye", isOn: $showEmptyChannels)
                     .help(showEmptyChannels ? "Hide empty channels" : "Show empty channels")
             }
+        }
+        .inspector(isPresented: $showInspector) {
+            ChannelInspector(config: $config, selection: selection, issues: issues)
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+        }
+        .toolbar {
+            ToolbarItem {
+                Button("Inspector", systemImage: "sidebar.right") { showInspector.toggle() }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                    .help(showInspector ? "Hide the inspector (⌥⌘I)" : "Show the inspector (⌥⌘I)")
+            }
+        }
+    }
+
+    /// Drops dragged channels onto `target`; see `ScannerConfig.drop`. One undo step.
+    private func drop(_ items: [ChannelDrag], at target: Int) {
+        guard !items.isEmpty else { return }
+        let placed = config.drop(items, at: target, window: window)
+        selection = Set(placed)
+        if placed.count < items.count { NSSound.beep() }
+    }
+
+    // MARK: Cells
+    //
+    // Inside a Table, SwiftUI drops accessibility labels from pickers and checkboxes (and from
+    // header text), so VoiceOver takes each cell's context from its column header. Headers are
+    // therefore spelled out rather than abbreviated.
+
+    @ViewBuilder
+    private func issueCell(_ row: ChannelRow) -> some View {
+        if let worst = row.issues.map(\.severity).max() {
+            IssueIcon(severity: worst)
+                .help(row.issues.map(\.message).joined(separator: "\n"))
+        }
+    }
+
+    private func numberCell(_ row: ChannelRow) -> some View {
+        Text("\(row.number)").monospacedDigit().foregroundStyle(.secondary)
+    }
+
+    private func nameCell(_ row: ChannelRow) -> some View {
+        CommitTextField(title: row.channel.isEmpty ? "" : "No name", value: row.channel.name) { text in
+            edit(row.number) { $0.name = text }
+            return true
+        }
+        .disabled(row.channel.isEmpty)
+        .accessibilityLabel("Channel \(row.number) name")
+    }
+
+    private func frequencyCell(_ row: ChannelRow) -> some View {
+        FrequencyField(title: row.channel.isEmpty ? "Add…" : "MHz", frequency: row.channel.frequency, allowsEmpty: true) { frequency in
+            config.setFrequency(frequency, ofChannel: row.number)
+        }
+        .accessibilityLabel("Channel \(row.number) frequency in megahertz")
+    }
+
+    @ViewBuilder
+    private func modulationCell(_ row: ChannelRow) -> some View {
+        if !row.channel.isEmpty {
+            Picker("Modulation", selection: channelBinding(row.number, \.modulation)) {
+                ForEach(Modulation.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .labelsHidden()
+        }
+    }
+
+    @ViewBuilder
+    private func toneCell(_ row: ChannelRow) -> some View {
+        if !row.channel.isEmpty {
+            Menu(row.channel.tone.displayName) {
+                ToneMenuItems { tone in edit(row.number) { $0.tone = tone } }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private func delayCell(_ row: ChannelRow) -> some View {
+        if !row.channel.isEmpty {
+            Picker("Delay", selection: channelBinding(row.number, \.delay)) {
+                ForEach(Delay.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .labelsHidden()
+        }
+    }
+
+    @ViewBuilder
+    private func lockoutCell(_ row: ChannelRow) -> some View {
+        if !row.channel.isEmpty {
+            Toggle("Locked out", isOn: channelBinding(row.number, \.lockedOut))
+                .labelsHidden()
+                .help("Skip this channel when scanning")
+        }
+    }
+
+    @ViewBuilder
+    private func priorityCell(_ row: ChannelRow) -> some View {
+        if !row.channel.isEmpty {
+            Toggle("Priority", isOn: channelBinding(row.number, \.priority))
+                .labelsHidden()
+                .help("Priority channel (one per bank)")
         }
     }
 

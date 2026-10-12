@@ -92,9 +92,15 @@ final class ScannerWriter {
 }
 
 /// Copies of the scanner's contents taken before each write (SPEC.md §7), kept in Application
-/// Support. The newest 50 are kept.
+/// Support. The newest `keep` are kept (50 unless changed in Settings).
 enum BackupStore {
-    static let keep = 50
+    static let retentionKey = "backupRetention"
+    static let defaultRetention = 50
+
+    static var keep: Int {
+        let stored = UserDefaults.standard.integer(forKey: retentionKey)
+        return stored > 0 ? stored : defaultRetention
+    }
 
     static var directory: URL {
         URL.applicationSupportDirectory.appending(path: "BC125AT CPS/Backups", directoryHint: .isDirectory)

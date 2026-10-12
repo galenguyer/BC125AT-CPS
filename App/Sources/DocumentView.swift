@@ -22,13 +22,15 @@ struct DocumentView: View {
     @State private var importingCSV = false
     @State private var exportingCSV = false
     @State private var importSummary: String?
+    /// Identifies this window for drag and drop.
+    @State private var window = UUID()
 
     private var config: ScannerConfig { document.config }
 
     var body: some View {
         let issues = config.validate()
         NavigationSplitView {
-            Sidebar(config: $document.config, issues: issues, selection: $selection)
+            Sidebar(config: $document.config, issues: issues, selection: $selection, window: window)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } detail: {
             detail(issues: issues)
@@ -88,9 +90,9 @@ struct DocumentView: View {
     private func detail(issues: [ValidationIssue]) -> some View {
         switch selection {
         case .allChannels, nil:
-            ChannelTableView(config: $document.config, numbers: Array(1...ScannerConfig.channelCount), issues: issues, title: "All Channels")
+            ChannelTableView(config: $document.config, numbers: Array(1...ScannerConfig.channelCount), issues: issues, title: "All Channels", window: window)
         case .bank(let bank):
-            ChannelTableView(config: $document.config, numbers: Array(Channel.channels(inBank: bank)), issues: issues, title: bankTitle(bank))
+            ChannelTableView(config: $document.config, numbers: Array(Channel.channels(inBank: bank)), issues: issues, title: bankTitle(bank), window: window)
                 .id(bank)
         case .search:
             SearchView(config: $document.config, issues: issues)

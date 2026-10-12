@@ -1,0 +1,14 @@
+BC125AT CPS
+Copyright (c) 2026 Galen Guyer. Licensed under the MIT License (see LICENSE).
+
+This project used the following as references:
+
+bc125py — https://github.com/itsmaxymoo/bc125py
+Copyright (c) 2022-2023 Max Loiacono. MIT License.
+  Used as a reference for the BC125AT serial protocol, CTCSS/DCS code table, and factory custom
+  search ranges, and for compatibility with its CSV export format. No bc125py source code is
+  included in this project.
+
+Uniden BC125AT Operation Specification, Appendix C ("PC programming Command").
+  Used as a reference for the serial command set. Uniden is a trademark of Uniden Holdings
+  Corporation; this project is not affiliated with or endorsed by Uniden.
