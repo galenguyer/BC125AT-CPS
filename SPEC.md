@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** Draft v0.5 (Phase 0 complete) · 2026-10-12  
+**Status:** v0.6 (milestones 0–2 complete) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -33,12 +33,13 @@ A native SwiftUI app for macOS that reads, edits, and writes the configuration o
 | USB VID / PID | `0x1965` / `0x0017` |
 | Interfaces | 0: CDC ACM control (class 2/2/0, 1 endpoint). 1: CDC data (class 10), **bulk IN `0x81`, bulk OUT `0x02`, 64-byte packets** |
 | macOS driver | **None usable.** `AppleUSBCDCCompositeDevice` loads but never matches, so there's no `/dev/cu.*` node |
-| Transport | Open interface 1 with `IOUSBHostInterface` and exchange bytes on the bulk pipes. Needs no root, no driver, and **no line-coding/baud or DTR setup** |
+| Transport | Open interface 1 with **IOUSBLib** (`IOUSBInterfaceInterface942`) and exchange bytes on the bulk pipes. Needs no root, no driver, and **no line-coding/baud or DTR setup** |
 | Framing | ASCII commands ending in `\r`; replies end in `\r`. **Replies can be split across USB transfers**, so reads accumulate until `\r` |
 | Flow | Strictly one command at a time. About 3 ms per command; all 500 channels read in 1.5 s |
 
-The transport is `USBTransport` in `BC125ATKit`.
-- `IOUSBHostInterface`'s own matching dictionary doesn't find this device's interfaces, so the transport finds the `IOUSBHostDevice` by VID/PID and walks its children for `bInterfaceNumber == 1`.
+The transport is `USBTransport` in `BC125ATKit`; the USB calls are in a small C target, `CBC125ATUSB`.
+- **Sandbox finding (milestone 2):** in an App Sandbox with `com.apple.security.device.usb`, the newer **IOUSBHost** framework can't open the scanner. Opening the interface fails with `0xe00002c9`, and opening the device fails with `kIOReturnNotPermitted`. The older **IOUSBLib** plug-in API works fully in the same sandbox. Phase 0 used IOUSBHost, which only worked because the CLI isn't sandboxed. The transport now uses IOUSBLib, and reads are byte-identical either way.
+- Matching on the interface class doesn't find this device's interfaces, so the transport finds the `IOUSBHostDevice` by VID/PID and walks its children for `bInterfaceNumber == 1`.
 - The app watches IOKit for that VID/PID, so the user never picks a port. If several scanners are connected, it shows a picker keyed by `locationID`.
 - A program that already holds a user client on the *device* (Calibre does, while probing for e-readers) did not get in the way, because the app opens the *interface*.
 
@@ -215,18 +216,26 @@ Each model type has its own `validate() -> [ValidationIssue]`. An issue is eithe
 ## 6. Architecture
 
 ```
-BC125ATKit (Swift package, no UI)
-├── Transport      USBTransport (IOUSBHost bulk pipes, §2) · MockTransport
-├── Protocol       Command enum → encode / decode · response parser · error types
-├── Model          ScannerConfig and friends, validation, tone tables
-├── Sync           ScannerSession actor: connect, readAll, diff, write(changes), progress
-└── Formats        native JSON, CSV
-BC125ATCPS (SwiftUI app)
-└── DocumentGroup + FileDocument, views, and the device-discovery observer
+BC125AT CPS.xcodeproj        the app target; folder-synchronized, so files aren't listed in it
+App/
+├── Info.plist               document type + exported UTType (merged with generated keys)
+├── BC125ATCPS.entitlements  sandbox, USB, user-selected files
+└── Sources/                 SwiftUI app: DocumentGroup, sidebar, channel table, section views,
+                             ScannerMonitor (connected devices), ScannerReader (read + progress)
+BC125ATKit/                  Swift package, no UI
+├── Sources/CBC125ATUSB      C: IOUSBLib open/read/write/close (§2)
+├── Sources/BC125ATKit
+│   ├── Transport            USBTransport, USBDeviceWatcher, MockScanner (stateful fake), MockTransport
+│   ├── Protocol             ScannerConnection (send/parse, ERR/NG), Wire (model ↔ command fields)
+│   ├── Model                Frequency, BandPlan, ToneCode, Channel, settings, ScannerConfig, validation
+│   ├── Sync                 ScannerSession actor: identify, readConfiguration, releaseProgramMode
+│   └── Formats              NativeFormat (.bc125at JSON), CSVFormat
+├── Sources/bc125at-cli      list/info/raw/dump/read/verify/probe/release
+└── Tests/BC125ATKitTests    Swift Testing; Fixtures/step-measurements.csv (19,505 measured values)
 ```
 
 ### 6.1 Concurrency
-- `ScannerSession` is an `actor`. It owns the transport and runs one command at a time, as Uniden's spec requires. Commands take about 3 ms. Each has a timeout (default 1 s; `CLR` 120 s, because the spec says it takes "dozens of seconds"). A timed-out read is retried once, but only for get commands. A set command that times out is never sent again blindly: the session reads the item back to find out whether it was applied.
+- `ScannerSession` is an `actor` with a custom executor: its own serial dispatch queue, so blocking USB I/O never occupies Swift's cooperative thread pool. It owns the transport and runs one command at a time, as Uniden's spec requires. Commands take about 3 ms. Each has a timeout (default 1 s; `CLR` 120 s, because the spec says it takes "dozens of seconds"). A timed-out read is retried once, but only for get commands. A set command that times out is never sent again blindly: the session reads the item back to find out whether it was applied.
 - Long jobs (reading all, writing) report progress through an `AsyncStream<SyncProgress>` and can be cancelled. On cancel or any error, the session always sends `EPG` so the radio isn't left stuck in program mode.
 - Built with Swift 6 strict concurrency.
 
@@ -234,14 +243,18 @@ BC125ATCPS (SwiftUI app)
 Commands are described by a `ScannerModel` protocol: channel count, bank count, ranges, and which commands it supports. This keeps a second model possible later without generalizing everything now.
 
 ### 6.3 Sandbox & Distribution
-- The app is sandboxed with the **`com.apple.security.device.usb`** entitlement (USB via IOUSBHost, not serial; §2) and user-selected file read/write access. **To check in milestone 2:** that sandboxed IOUSBHost interface access works in an ad-hoc-signed build.
+- The app is sandboxed with the **`com.apple.security.device.usb`** entitlement and user-selected file read/write access. Verified: the ad-hoc-signed, sandboxed app reads the scanner, but only through IOUSBLib (§2).
 - It's distributed as a zipped `.app` attached to GitHub Releases. It isn't on the Mac App Store.
 - **No paid Apple Developer account yet**, so release builds are **ad-hoc signed and not notarized**. The README will explain how to get past Gatekeeper: on macOS 15, open System Settings → Privacy & Security → "Open Anyway", or run `xattr -dr com.apple.quarantine`. If we sign up for a developer account later, the only change is adding a Developer ID signing and `notarytool` step to the release script.
 - Releases are built by a local script, `scripts/release.sh`, that runs `xcodebuild archive`, signs ad-hoc, and zips the app. CI on GitHub Actions can come later, once the repo is published.
 
+### 6.4 Building and testing
+- Kit and CLI: `cd BC125ATKit && swift test` runs the 40 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
+- App: open `BC125AT CPS.xcodeproj`, or `xcodebuild -project "BC125AT CPS.xcodeproj" -scheme "BC125AT CPS" build`. It's ad-hoc signed ("Sign to Run Locally") with no team.
+
 ## 7. Sync Behavior
 
-1. **Read from Scanner**: runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. The result opens as a new untitled document, or replaces the current one after a confirmation.
+1. **Read from Scanner** (⇧⌘R): checks `MDL` is BC125AT, runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. A progress sheet can cancel; the result says the scanner is in Scan Hold. On an untitled, unchanged document the read fills it directly; otherwise it asks before replacing. App-only bank names and notes are kept, and **one ⌘Z undoes the read**. SwiftUI registers that undo for changes made through the document binding, so the app must not register its own as well, or every read would take two ⌘Z presses. (SwiftUI's undo entry has no action name, so the menu says "Undo", not "Undo Read from Scanner".) The result opens as a new untitled document, or replaces the current one after a confirmation.
 2. **Write to Scanner**:
    1. Validate the document. Any errors stop the write.
    2. Read the scanner's current state, or reuse a cached read from this session if it's still fresh.
@@ -292,8 +305,8 @@ Light and dark mode, Dynamic Type where macOS supports it, full VoiceOver labels
 
 ## 10. Milestones
 0. ✅ **Protocol verification** (done 2026-10-12; `phase0/REPORT.md` and `phase0/band-plan.json`): a small CLI in the package (`bc125at-cli info|dump|raw|verify|probe`) that confirms the macOS driver works (or proves the IOUSBHost fallback is needed) and checks every **verify** item in §2–3 on real hardware. It reads only by default. `--allow-write` adds round-trip tests on two empty channels and a few settings; each change is restored and read back.
-1. **Kit**: transport, protocol, model, validation, native and CSV formats, and the mock transport, all with tests.
-2. **Read-only app**: document app, channel table, and Read from Scanner.
+1. ✅ **Kit**: transport, protocol, model, validation (including `BandPlan`), native and CSV formats (CSV also imports bc125py exports), a stateful mock scanner, and the `ScannerSession` actor, all with tests.
+2. ✅ **Read-only app**: document app (`.bc125at`), channel table (all channels or per bank, search, show/hide empty, issue badges), read-only Settings / Search & Close Call / Global Lockouts views, an issues popover, connection status with hot-plug detection, Read from Scanner, and Release Scanner. Verified end to end against a real BC125AT in the sandboxed, ad-hoc-signed app.
 3. **Editing**: all editors, validation in the UI, undo, and copy/paste.
 4. **Write**: diff review, writing only changes, read-back checks, and backups.
 5. **Polish**: drag reordering, inspector, accessibility, app icon, release script, README.
