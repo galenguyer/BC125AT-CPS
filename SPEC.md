@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** v1.0 of this spec, app 0.2 (milestones 0–7 complete) · 2026-10-12  
+**Status:** v1.0 of this spec, app 1.0 (milestones 0–7 complete) · 2026-10-13  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`

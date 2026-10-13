@@ -68,9 +68,9 @@ bc125at-cli release                    # take a stuck scanner out of program mod
 ## Building from source
 
 ```sh
-cd BC125ATKit && swift test            # the protocol and model library, with 65 tests
+cd BC125ATKit && swift test            # the protocol and model library, with 74 tests
 open "BC125AT CPS.xcodeproj"           # the app
-scripts/release.sh                     # test, archive, sign ad hoc, and zip into dist/
+scripts/release.sh                     # from a clean checkout of HEAD: test, archive, sign ad hoc, zip into dist/
 ```
 
 `SPEC.md` describes the design and the BC125AT's serial protocol as measured on real hardware,
