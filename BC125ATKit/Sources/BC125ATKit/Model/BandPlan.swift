@@ -57,6 +57,7 @@ public struct BandPlan: Sendable {
     /// What the scanner will store if sent `frequency`, or `nil` if it would reject it (`CIN,ERR`).
     public func storedValue(for frequency: Frequency) -> Frequency? {
         guard let range = ranges.first(where: { $0.contains(frequency.hundredHz) }) else { return nil }
+        if segments.isEmpty { return frequency }
         if frequency.hundredHz % 50 == 0, keepsExact5kHz.contains(where: { $0.contains(frequency.hundredHz) }) {
             return frequency
         }
@@ -73,7 +74,12 @@ public struct BandPlan: Sendable {
         return best.map { Frequency(hundredHz: UInt32($0)) }
     }
 
-    /// The BC125AT's measured plan (SPEC.md §3.5).
+    /// For a scanner set to the Canada band plan, which hasn't been measured (SPEC.md §3.5). Only
+    /// the scanner's frequency ranges are known, so every in-range frequency is predicted to be
+    /// stored as sent; what the scanner actually stores is reported after writing.
+    public static let rangesOnly = BandPlan(ranges: bc125at.ranges, segments: [], keepsExact5kHz: [])
+
+    /// The BC125AT's measured plan, for the USA band plan region (SPEC.md §3.5).
     public static let bc125at = BandPlan(
         ranges: [250_000...540_000, 1_080_000...1_740_000, 2_250_000...3_800_000, 4_000_000...5_120_000],
         segments: [

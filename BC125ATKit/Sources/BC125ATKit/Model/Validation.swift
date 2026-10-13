@@ -28,7 +28,9 @@ public struct ValidationIssue: Hashable, Sendable, Identifiable {
 
 extension ScannerConfig {
     /// Every problem in the configuration, in channel order then section order (SPEC.md §3, §4).
-    public func validate(bandPlan: BandPlan = .bc125at) -> [ValidationIssue] {
+    /// Checks frequencies against `bandPlan`, or this configuration's `channelPlan` if nil.
+    public func validate(bandPlan: BandPlan? = nil) -> [ValidationIssue] {
+        let bandPlan = bandPlan ?? channelPlan
         var issues: [ValidationIssue] = []
         func add(_ severity: ValidationIssue.Severity, _ location: ValidationIssue.Location, _ message: String) {
             issues.append(ValidationIssue(severity: severity, location: location, message: message))
@@ -37,6 +39,11 @@ extension ScannerConfig {
         for (offset, channel) in channels.enumerated() where !channel.isEmpty {
             for issue in channel.validate(bandPlan: bandPlan) {
                 add(issue.severity, .channel(offset + 1), issue.message)
+            }
+            // The Canada plan hasn't been measured. Being off the USA plan is only a hint.
+            if metadata.bandPlanRegion == .canada, let frequency = channel.frequency,
+               let usa = BandPlan.bc125at.storedValue(for: frequency), usa != frequency {
+                add(.warning, .channel(offset + 1), "\(frequency) MHz isn't on the USA channel plan, so it may not be on the Canada plan either. The scanner may store a nearby frequency; you'll see what it stored after writing")
             }
         }
 
@@ -64,6 +71,9 @@ extension ScannerConfig {
         }
         if !SystemSettings.levelRange.contains(settings.squelch) {
             add(.error, .settings, "Squelch must be 0–15")
+        }
+        if metadata.bandPlanRegion == .canada {
+            add(.warning, .settings, "The scanner is set to the Canada band plan, which BC125AT CPS can't check frequencies against. Frequencies are written as entered, and any the scanner stores differently are shown after writing")
         }
 
         if !search.serviceGroupsEnabled.contains(true) {

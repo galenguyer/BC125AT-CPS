@@ -19,9 +19,15 @@ struct DocumentView: View {
     @State private var confirmingReplace = false
     @State private var showingIssues = false
     @State private var blockingErrors: [ValidationIssue] = []
-    @State private var importingCSV = false
-    @State private var exportingCSV = false
-    @State private var importSummary: String?
+    /// One `fileImporter` and one `fileExporter` serve both formats, since SwiftUI honours only
+    /// one of each per view. The kind and the file are kept apart from the `is presented` flags
+    /// because SwiftUI clears those before calling the completion handler.
+    @State private var importing = false
+    @State private var importKind = ImportKind.csv
+    @State private var exporting = false
+    /// Built only when Export is chosen.
+    @State private var exportFile: ExportFile?
+    @State private var importSummary: (title: String, message: String)?
     /// Identifies this window for drag and drop.
     @State private var window = UUID()
 
@@ -53,7 +59,8 @@ struct DocumentView: View {
         }
         .focusedSceneValue(\.documentActions, DocumentActions(
             read: requestRead, write: requestWrite, canUseScanner: canUseScanner,
-            importCSV: { importingCSV = true }, exportCSV: { exportingCSV = true }
+            importCSV: { startImport(.csv) }, exportCSV: { startExport(.csv(config)) },
+            importUniden: { startImport(.uniden) }, exportUniden: { startExport(.uniden(config)) }
         ))
         .confirmationDialog("Replace this document with the scanner's contents?", isPresented: $confirmingReplace) {
             Button("Read and Replace", action: startRead)
@@ -68,10 +75,10 @@ struct DocumentView: View {
             Text(blockingErrors.prefix(5).map { "\($0.location.title): \($0.message)" }.joined(separator: "\n")
                  + (blockingErrors.count > 5 ? "\n…and \(blockingErrors.count - 5) more" : ""))
         }
-        .alert("Channels Imported", isPresented: Binding(get: { importSummary != nil }, set: { if !$0 { importSummary = nil } })) {
+        .alert(importSummary?.title ?? "", isPresented: Binding(get: { importSummary != nil }, set: { if !$0 { importSummary = nil } })) {
             Button("OK") {}
         } message: {
-            Text(importSummary ?? "")
+            Text(importSummary?.message ?? "")
         }
         .sheet(isPresented: .constant(reader.state.isPresented)) {
             ReadProgressSheet(reader: reader)
@@ -79,11 +86,15 @@ struct DocumentView: View {
         .sheet(isPresented: .constant(writer.state.isPresented)) {
             WriteSheet(writer: writer, write: startWrite)
         }
-        .fileImporter(isPresented: $importingCSV, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
-            if case .success(let url) = result { importCSV(from: url) }
+        .fileImporter(isPresented: $importing, allowedContentTypes: importKind.contentTypes) { result in
+            guard case .success(let url) = result else { return }
+            switch importKind {
+            case .csv: importCSV(from: url)
+            case .uniden: importUniden(from: url)
+            }
         }
-        .fileExporter(isPresented: $exportingCSV, document: CSVDocument(text: CSVFormat.export(config)),
-                      contentType: .commaSeparatedText, defaultFilename: "Channels") { _ in }
+        .fileExporter(isPresented: $exporting, document: exportFile, contentType: exportFile?.contentType ?? .commaSeparatedText,
+                      defaultFilename: exportFile?.defaultName) { _ in exportFile = nil }
     }
 
     @ViewBuilder
@@ -140,6 +151,8 @@ struct DocumentView: View {
         var merged = newConfig
         merged.bankNames = document.config.bankNames
         merged.metadata.notes = document.config.metadata.notes
+        // The scanner can't report its band plan, so keep what the document knows.
+        merged.metadata.bandPlanRegion = document.config.metadata.bandPlanRegion
         document.config = merged
     }
 
@@ -161,11 +174,23 @@ struct DocumentView: View {
         writer.write(device: device) { report, plan in
             // When everything verified, update the document to exactly what the scanner stored
             // (snapped frequencies, trimmed names). On failure, keep the document as the user left it.
-            guard report.succeeded, !plan.adjustments.isEmpty else { return }
-            var updated = plan.target
+            guard report.succeeded, !plan.adjustments.isEmpty || !report.storedDifferently.isEmpty else { return }
+            var updated = report.acceptedConfig
             updated.metadata = document.config.metadata
             document.config = updated
         }
+    }
+
+    // MARK: Import and export
+
+    private func startImport(_ kind: ImportKind) {
+        importKind = kind
+        importing = true
+    }
+
+    private func startExport(_ file: ExportFile) {
+        exportFile = file
+        exporting = true
     }
 
     // MARK: CSV
@@ -185,27 +210,93 @@ struct DocumentView: View {
                 summary += "\n\n\(imported.problems.count) \(imported.problems.count == 1 ? "row was" : "rows were") skipped:\n"
                 summary += imported.problems.prefix(8).map { "Line \($0.line): \($0.message)" }.joined(separator: "\n")
             }
-            importSummary = summary
+            importSummary = ("Channels Imported", summary)
         } catch let error as CSVFormat.ImportError {
-            importSummary = error.description
+            importSummary = ("Couldn't Import Channels", error.description)
         } catch {
-            importSummary = error.localizedDescription
+            importSummary = ("Couldn't Import Channels", error.localizedDescription)
+        }
+    }
+
+    /// Replaces the document with a file from Uniden's software, as one undo step. The file has
+    /// no global lockouts, so the document's are kept, as are its notes and any bank names the
+    /// file leaves at Uniden's defaults.
+    private func importUniden(from url: URL) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        do {
+            var imported = try UnidenFormat.decode(Data(contentsOf: url))
+            let current = document.config
+            imported.globalLockouts = current.globalLockouts
+            for bank in imported.bankNames.indices where imported.bankNames[bank].isEmpty {
+                imported.bankNames[bank] = current.bankNames[bank]
+            }
+            var metadata = current.metadata
+            metadata.bandPlanRegion = imported.metadata.bandPlanRegion
+            imported.metadata = metadata
+            document.config = imported
+
+            var message = "Read \(imported.usedChannelCount) channels and every setting from \(url.lastPathComponent)."
+            if !current.globalLockouts.isEmpty {
+                message += "\n\nUniden's files have no global lockouts, so this document's \(current.globalLockouts.count) were kept."
+            }
+            if imported.metadata.bandPlanRegion == .canada {
+                message += "\n\nThe file is for a scanner set to the Canada band plan. Frequencies are checked against the USA band plan, so some may be stored differently than shown."
+            }
+            importSummary = ("Uniden File Imported", message)
+        } catch let error as UnidenFormat.ImportError {
+            importSummary = ("Couldn't Import the Uniden File", error.description)
+        } catch {
+            importSummary = ("Couldn't Import the Uniden File", error.localizedDescription)
         }
     }
 }
 
-struct CSVDocument: FileDocument {
-    static let readableContentTypes: [UTType] = [.commaSeparatedText]
-    var text: String
+enum ImportKind {
+    case csv, uniden
 
-    init(text: String) { self.text = text }
+    var contentTypes: [UTType] {
+        switch self {
+        case .csv: [.commaSeparatedText, .plainText]
+        case .uniden: [.unidenBC125AT]
+        }
+    }
+}
+
+extension UTType {
+    /// Files from Uniden's BC125AT software. Declared as imported in Info.plist.
+    static let unidenBC125AT = UTType(importedAs: "net.k9fgt.bc125at.uniden-ss", conformingTo: .plainText)
+}
+
+/// A file to export: CSV channels, or a whole configuration for Uniden's software.
+struct ExportFile: FileDocument {
+    static let readableContentTypes: [UTType] = [.commaSeparatedText, .unidenBC125AT]
+    var data: Data
+    var contentType: UTType
+    var defaultName: String
+
+    static func csv(_ config: ScannerConfig) -> ExportFile {
+        ExportFile(data: Data(CSVFormat.export(config).utf8), contentType: .commaSeparatedText, defaultName: "Channels")
+    }
+
+    static func uniden(_ config: ScannerConfig) -> ExportFile {
+        ExportFile(data: UnidenFormat.encode(config), contentType: .unidenBC125AT, defaultName: "Scanner")
+    }
+
+    init(data: Data, contentType: UTType, defaultName: String) {
+        self.data = data
+        self.contentType = contentType
+        self.defaultName = defaultName
+    }
 
     init(configuration: ReadConfiguration) throws {
-        text = String(decoding: configuration.file.regularFileContents ?? Data(), as: UTF8.self)
+        data = configuration.file.regularFileContents ?? Data()
+        contentType = configuration.contentType
+        defaultName = ""
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: Data(text.utf8))
+        FileWrapper(regularFileWithContents: data)
     }
 }
 

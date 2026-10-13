@@ -8,6 +8,26 @@ struct SettingsView: View {
     @Binding var config: ScannerConfig
     var issues: [ValidationIssue]
 
+    /// The band plan can't be read or set over USB with the scanner's documented commands, so
+    /// this shows what an imported Uniden file recorded (SPEC.md §3.5).
+    private var bandPlanName: String {
+        switch config.metadata.bandPlanRegion {
+        case .usa: "USA"
+        case .canada: "Canada"
+        case nil: "USA (assumed)"
+        }
+    }
+
+    private var bandPlanNote: String {
+        var note = "The band plan can be changed in Uniden's BC125AT software."
+        if config.metadata.bandPlanRegion == nil {
+            note += " The scanner doesn't report it, so this shows USA unless a Uniden file recorded otherwise."
+        } else if config.metadata.bandPlanRegion == .canada {
+            note += " Frequencies can't be checked against the Canada plan, so they're written as entered and any the scanner stores differently are shown after writing."
+        }
+        return note
+    }
+
     var body: some View {
         Form {
             IssuesSection(issues: issues.filter { $0.location == .settings || $0.location == .bank(1) })
@@ -27,11 +47,16 @@ struct SettingsView: View {
                     Text("Squelch: \(config.settings.squelch)") + Text(squelchNote).foregroundStyle(.secondary)
                 }
             }
-            Section("Scanning") {
+            Section {
                 Picker("Priority Mode", selection: $config.settings.priorityMode) {
                     ForEach(PriorityMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
                 Toggle("Weather Alert Priority", isOn: $config.settings.weatherAlertPriority)
+                LabeledContent("Band Plan", value: bandPlanName)
+            } header: {
+                Text("Scanning")
+            } footer: {
+                Text(bandPlanNote).foregroundStyle(.secondary)
             }
             Section {
                 Stepper("Charge Time: \(config.settings.batteryChargeHours) hours", value: $config.settings.batteryChargeHours,
@@ -100,20 +125,7 @@ struct SearchView: View {
             }
             Section("Custom Search Ranges") {
                 ForEach(config.search.customRanges.indices, id: \.self) { index in
-                    HStack {
-                        Toggle("Range \(index + 1)", isOn: $config.search.customRanges[index].enabled)
-                        Spacer()
-                        FrequencyField(title: "Lower", frequency: config.search.customRanges[index].lower) { frequency in
-                            if let frequency { config.search.customRanges[index].lower = frequency }
-                        }
-                        .frame(width: 100)
-                        Text("–")
-                        FrequencyField(title: "Upper", frequency: config.search.customRanges[index].upper) { frequency in
-                            if let frequency { config.search.customRanges[index].upper = frequency }
-                        }
-                        .frame(width: 100)
-                        Text("MHz").foregroundStyle(.secondary)
-                    }
+                    customRangeRow(index)
                 }
             }
             Section("Close Call") {
@@ -131,6 +143,33 @@ struct SearchView: View {
         .formStyle(.grouped)
         .textFieldStyle(.roundedBorder)
         .navigationTitle("Search & Close Call")
+    }
+
+    /// One compact row: the range's frequencies, then its switch at the trailing edge like the
+    /// form's other toggles.
+    private func customRangeRow(_ index: Int) -> some View {
+        let range = config.search.customRanges[index]
+        return HStack {
+            Text("Range \(index + 1)")
+            Spacer()
+            FrequencyField(title: "Lower", frequency: range.lower) { frequency in
+                if let frequency { config.search.customRanges[index].lower = frequency }
+            }
+            .labelsHidden()
+            .accessibilityLabel("Range \(index + 1) lower frequency in megahertz")
+            .frame(width: 90)
+            Text("–").foregroundStyle(.secondary)
+            FrequencyField(title: "Upper", frequency: range.upper) { frequency in
+                if let frequency { config.search.customRanges[index].upper = frequency }
+            }
+            .labelsHidden()
+            .accessibilityLabel("Range \(index + 1) upper frequency in megahertz")
+            .frame(width: 90)
+            Text("MHz").foregroundStyle(.secondary)
+                .padding(.trailing, 8)
+            Toggle("Search range \(index + 1)", isOn: $config.search.customRanges[index].enabled)
+                .labelsHidden()
+        }
     }
 }
 

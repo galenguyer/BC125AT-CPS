@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** v0.8 (milestones 0–5 complete) · 2026-10-12  
+**Status:** v0.9 (milestones 0–6 complete) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -164,6 +164,10 @@ The rules, measured on firmware 1.06.06:
 
 In the sampled bands, an undiscovered irregular segment is possible but unlikely. If one exists, read-back (§7) catches it.
 
+**Band plan region.** All of the above is the scanner's **USA** band plan. The scanner also has a **Canada** plan, chosen by holding **1** (USA) or **2** (Canada) while powering on; per RadioReference users it uses 5 kHz in 25–54 MHz, 8.33 kHz for air and 6.25 kHz in 400–512 MHz, but it hasn't been measured here. **Uniden's software does send it to the scanner**, through a command that isn't in the documented set. Tested: after it wrote a file set to Canada, off-plan VHF-high writes snapped to a 5 kHz grid (154.0062 → 154.0050, 155.0012 → 155.0000, 165.0030 → 165.0050) instead of the USA table's 154.0025, 155.0025 and 165.0000, while 137–150.775, 225–380 and 25–54 MHz behaved as in the USA plan. The app can't read or set it with the documented commands; only Uniden's files record it (§5.1). The app keeps it in the document's metadata (kept across Read from Scanner, which can't see it), shows it read-only in Settings, and assumes USA when it isn't known.
+
+**On the Canada plan** the app can't predict snapping. `ScannerConfig.channelPlan` is then `BandPlan.rangesOnly`, which checks only the frequency ranges: frequencies are written as entered, with a warning on any that are off the USA plan (a hint that they may be off the Canada one too), and after writing the app reports what the scanner stored (§7).
+
 **How the app uses this:**
 - `BandPlan` in `BC125ATKit` carries the table and predicts what the scanner will store for any frequency.
 - The channel editor shows the predicted value and warns *before* writing ("154.0062 will be stored as 154.0025").
@@ -209,9 +213,33 @@ Each model type has its own `validate() -> [ValidationIssue]`. An issue is eithe
 
 | Format | Purpose |
 |---|---|
-| `.bc125at` (native) | A JSON-encoded `ScannerConfig` with a format version. UTType is `net.k9fgt.bc125at.config`. |
+| `.bc125at` (native) | A JSON-encoded `ScannerConfig` with a format version. UTType is `net.k9fgt.bc125at.config`. Tones are written as Uniden's files write them (`Off`, `Srch`, `NoTone`, `C110.9`, `D023`; §5.1). The app shows the tone-squelch-off setting as **CSQ**. |
 | CSV | Import and export channels. The columns are `Channel,Bank,Name,Frequency,Modulation,Tone,Delay,Lockout,Priority`. Tones are written in readable form (`CTCSS 100.0`, `DCS 023`). |
-| Uniden `.bc125at_ss` | Import only. A nice-to-have, planned after v1 (milestone 6). The format will be reverse-engineered from sample files the maintainer exports from Uniden's software. |
+| Uniden `.bc125at_ss` | Import and export (File menu; `bc125at-cli convert`). See §5.1. |
+
+### 5.1 Uniden `.bc125at_ss`
+Files from Uniden's BC125AT software (`UnidenFormat`). Worked out from three files the maintainer saved from Uniden's software and wrote to the scanner with it; after each, every field (3,539 per file) was compared with a dump of the scanner. Exporting an imported file reproduces Uniden's file byte for byte.
+
+Tab-separated text, CRLF line endings, one record per line, in this order:
+
+| Record | Fields | Notes |
+|---|---|---|
+| `Misc` | backlight, key beep, key lock, contrast, battery hours, volume, squelch, band plan | Backlight `On` `Off` `K+S` (= AO, AF, KS); `Key`/`Squelch` for KY/SQ are assumed, not yet seen. Key beep `Auto`/`Off` (0/99). Band plan `USA`/`Canada` (§3.5) |
+| `Priority` | mode | `Off` `On` `Plus` `DND` (0–3) |
+| `WxPri` | On/Off | |
+| `Service` ×10 | n, name, flag | |
+| `Custom` ×10 | n, name, lower Hz, upper Hz, flag | Names are Uniden's ("Search Bnak1", sic); the app doesn't keep them |
+| `CloseCall` | mode, beep, light, lockout | Mode `Off` `Pri` `DND` (0–2) |
+| `CloseCallBands` | 5 × On/Off | On = enabled |
+| `GeneralSearch` | delay, code search | |
+| `Conventional` | n, name, flag | One per bank, each followed by its 50 `C-Freq` lines. "Bank n" means no name |
+| `C-Freq` ×500 | n, name, Hz, modulation, tone, lockout, delay, priority | Modulation `Auto` `AM` `FM` `NFM`. Tone `Off` `Srch` `NoTone` `C110.9` `D023`. Delay is the number of seconds (`-10`…`5`). An empty channel is `0` Hz |
+
+**Watch the polarity:** for `Conventional`, `Service` and `Custom`, the flag is the scanner's raw mask digit (§3.4), so **On means disabled**. `CloseCallBands` are the right way round. Frequencies are in hertz (the scanner uses 100 Hz). The files have no global lockouts: import keeps the document's, and export leaves them out.
+
+Import replaces the whole document as one undo step, keeping its global lockouts, notes, and bank names where the file has only Uniden's defaults. Any value not in the table above stops the import with the line number rather than being guessed.
+
+**Unexplained:** after Uniden's software wrote a file with `WxPri On` and band plan `Canada`, the scanner read back `WXS,0`. With `USA` it read back `WXS,1`. Either the Canada plan turns weather priority off or Uniden's software skips it; not investigated.
 
 ## 6. Architecture
 
@@ -261,6 +289,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
    3. Work out the diff (`WritePlan`) and show a review sheet listing the changes by section, plus anything the scanner will store differently (for example "154.0062 MHz will be stored as 154.0025 MHz").
    4. Write only the changed items, read each one back, and check it. A mismatch caused by snapping (§3.5), truncation, or a priority flag cleared elsewhere in the bank (§3.1) is reported as an adjustment, not a failure, and the document is updated to match.
    5. Report the result. A partial failure lists exactly which items the scanner rejected and which still differ after reading back; the document is then left as it was. On success with adjustments, the document is updated to the stored values (one undo step).
+   6. A channel that reads back identical except for its frequency was snapped by the scanner to a value the app didn't predict (always possible on the unmeasured Canada plan, §3.5). That isn't a failure: the result lists "154.0062 MHz was stored as 154.0025 MHz" and the document takes the stored value (`WriteReport.storedDifferently`, `acceptedConfig`).
    - Under the hood: one command per difference; priority channels are written last, because setting one clears the bank's others; lockout removals go before additions. Rejected commands (`ERR`/`NG`) are recorded and the rest still written; a timeout or cancel stops the write. Verification reads the whole scanner back and plans again, so anything still in that plan is a mismatch.
 3. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
 4. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
@@ -276,7 +305,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - **Inspector** (⌥⌘I, toolbar button): with one channel selected, every field as an editor, plus the value the scanner will store and the channel's issues. With several selected, counts and "Change All" menus for modulation, tone, delay and lockout.
 
 ### 8.2 Channel table
-- A SwiftUI `Table` that shows all 500 rows or one bank, with sortable columns.
+- An AppKit `NSTableView` (`ChannelTable`, wrapped for SwiftUI) that shows all 500 rows or one bank, with sortable columns. SwiftUI's `Table` re-laid out every visible row on each frame of a resize, so the sidebar animation dropped most of its frames (§8.7). The AppKit cells are plain controls reused as rows scroll, rows refresh in place only when their channel changes, and only the Name column stretches.
 - Cells edit inline. The frequency field accepts `162.55`, `162550k`, and similar forms and normalizes them. Invalid cells get a red badge with a tooltip.
 - Selecting several rows allows bulk edits from the context menu: modulation, tone, delay, lock out / unlock, priority (single channel), and Clear. Delete clears the selected channels.
 - Making a channel priority clears the other priority channel in its bank, as the scanner itself would.
@@ -287,13 +316,13 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Every edit can be undone through the document's `UndoManager`.
 
 ### 8.3 Search & Close Call
-Toggles for service search groups. A table with 10 custom ranges (low, high, enabled). Close Call settings for mode, alert beep, alert light, the band checkboxes, and lockout. Search delay and code search.
+Toggles for service search groups. The 10 custom ranges, one row each: lower and upper frequency, then the enabled switch. Close Call settings for mode, alert beep, alert light, the band checkboxes, and lockout. Search delay and code search.
 
 ### 8.4 Global Lockouts
 An editable list of frequencies with add and remove. The maximum count is unknown (§3.3).
 
 ### 8.5 Settings
-Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. Bank names are stored in the document only and are clearly labeled that way.
+Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. The band plan, read-only (§3.5), with a note that it's changed in Uniden's software. Bank names are stored in the document only and are clearly labeled that way.
 
 ### 8.6 Stretch: Live panel
 When connected but not in program mode, show volume and squelch sliders (`VOL`/`SQL` work outside program mode). The BC125AT has no status command (no `GLG`/`STS`), so there's no display of what it's receiving.
@@ -301,7 +330,11 @@ When connected but not in program mode, show volume and squelch sliders (`VOL`/`
 ### 8.7 Platform polish
 Light and dark mode, menu commands with keyboard shortcuts, and a Settings window (⌘,) for backup retention. App icon in `App/Sources/Assets.xcassets`, drawn by `scripts/make-icon.swift`.
 
-**VoiceOver:** text cells are labelled ("Channel 12 name"). Inside a `Table`, SwiftUI drops accessibility labels from pickers and checkboxes, and from header text, so those cells are announced with their column header. That's why the headers are spelled out (Modulation, Lockout, Priority) rather than abbreviated. The inspector gives every field a normal form label.
+- **Launch** opens a new, empty document rather than the Open panel (`NSShowAppCentricOpenPanelInsteadOfUntitledFile` is registered as false), since reading from the scanner is the usual first step.
+- **Title bar double-click** zooms the window, or does whatever System Settings says (`AppleActionOnDoubleClick`), anywhere in the title bar or toolbar that isn't a control (`TitlebarDoubleClick`). SwiftUI's toolbar content would otherwise swallow the clicks.
+- **Sidebar animation:** measured with Instruments (Animation Hitches) over six sidebar toggles in full screen on a 120 Hz display. A bare `NavigationSplitView` drops 17 frames; with SwiftUI's `Table` the app dropped 70, totalling 1.8 s of hitches with a worst frame of 100 ms. With the AppKit table it's 975 ms with a worst frame of 25 ms. What remains is AppKit re-tiling the scroll view and resizing every visible row view on each frame.
+
+**VoiceOver:** every control in the channel table carries its own label ("Channel 12 modulation"). The headers are still spelled out (Modulation, Lockout, Priority). The inspector gives every field a normal form label.
 
 ## 9. Testing
 - **Unit tests** cover encoding and decoding every command and its edge cases, the tone code tables, frequency parsing and formatting, validation, CSV round-trips, and diffs.
@@ -315,14 +348,14 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 3. ✅ **Editing**: inline channel editing, bulk edits, copy/cut/paste, Delete, editable Settings (including bank names and scan flags), Search & Close Call and Global Lockouts, validation shown inline, undo for every edit, and CSV import/export (File menu).
 4. ✅ **Write**: diff review, writing only changes, read-back checks, and backups. Verified against a real BC125AT: from the CLI (5 changes, then restoring the original) and from the app (pasting channels, an off-plan frequency that was adjusted, clearing channels, and the up-to-date case). Each test ended with a dump identical to the backup.
 5. ✅ **Polish**: drag reordering (within a table, onto a sidebar bank, and between documents), inspector, VoiceOver labelling, app icon, Settings window, release script, README and NOTICE.
-6. **Uniden import**: open `.bc125at_ss` files (needs sample files).
+6. ✅ **Uniden files**: import and export `.bc125at_ss` (§5.1), checked against a real scanner with three files from Uniden's software. Also: the AppKit channel table, title-bar double-click zoom, and a blank document at launch instead of the Open panel.
 
 ## 11. Decisions
 | Topic | Decision |
 |---|---|
 | Minimum OS | macOS 15 (Swift 6, Observation, modern `Table`) |
 | Distribution | GitHub Releases, ad-hoc signed and not notarized for now (§6.3) |
-| Uniden file import | Nice-to-have, milestone 6 |
+| Uniden files | Import and export, milestone 6 |
 | Bundle ID | `net.k9fgt.bc125at` |
 | License | MIT. bc125py is also MIT (© 2022–2023 Max Loiacono), so its tables can be reused with attribution in a NOTICE file |
 | Hardware | The maintainer has a BC125AT for Phase 0 and the hardware tests |
@@ -331,5 +364,5 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 | Protocol source | Uniden Operation Spec Appendix C, cross-checked with bc125py (§3) |
 
 ## 12. Open Questions
-1. Sample files from Uniden's own software are needed before milestone 6. bc125py's `.125at` files are its own command scripts, not Uniden's format.
+1. Which command does Uniden's software use to set the band plan (§3.5), and why did weather priority read back off with the Canada plan (§5.1)? Finding out would need a USB capture of Uniden's software. The Canada plan's channel steps are only spot-checked (5 kHz in 150–174 MHz at four points); measuring them fully, as was done for the USA plan, would let the app predict snapping on the Canada plan too.
 2. Should the app also accept the BC126AT, the international version? bc125py looks for it by name, and it probably uses the same protocol. If yes, accept `MDL,BC126AT` and check whether its frequency ranges differ.

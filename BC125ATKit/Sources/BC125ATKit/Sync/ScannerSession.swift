@@ -33,6 +33,12 @@ public struct WriteReport: Sendable {
     public var mismatches: [WritePlan.Step]
     /// The scanner's configuration as read back after writing.
     public var scannerConfig: ScannerConfig
+    /// Channels whose frequency the scanner stored differently than predicted (always possible on
+    /// the unmeasured Canada band plan). These aren't failures: the scanner snapped the value to
+    /// its own plan, and `acceptedConfig` has what it stored.
+    public var storedDifferently: [WritePlan.Adjustment] = []
+    /// The plan's target with the scanner's stored frequencies, for updating the document.
+    public var acceptedConfig: ScannerConfig
 
     public var succeeded: Bool { failures.isEmpty && mismatches.isEmpty }
 }
@@ -132,8 +138,23 @@ public actor ScannerSession {
         }
 
         let actual = try readAll(identity: identity, step: step)
-        let remaining = WritePlan(from: actual, to: plan.target)
-        return WriteReport(written: written, failures: failures, mismatches: remaining.steps, scannerConfig: actual)
+        // A channel that matches except for its frequency was snapped by the scanner to its own
+        // channel plan: accept what it stored and report it, rather than calling it a failure.
+        var accepted = plan.target
+        var storedDifferently: [WritePlan.Adjustment] = []
+        for number in 1...ScannerConfig.channelCount {
+            var expected = accepted[channel: number]
+            let stored = actual[channel: number]
+            guard let sent = expected.frequency, let kept = stored.frequency, sent != kept else { continue }
+            expected.frequency = kept
+            guard expected == stored else { continue }
+            accepted[channel: number] = expected
+            storedDifferently.append(.init(title: "Channel \(number)", detail: "\(sent) MHz was stored as \(kept) MHz"))
+        }
+        // The target is already as stored, so compare without snapping it again.
+        let remaining = WritePlan(from: actual, to: accepted, bandPlan: .rangesOnly)
+        return WriteReport(written: written, failures: failures, mismatches: remaining.steps, scannerConfig: actual,
+                           storedDifferently: storedDifferently, acceptedConfig: accepted)
     }
 
     private static let readSteps = settingsCommands + 10 + ScannerConfig.channelCount + 1

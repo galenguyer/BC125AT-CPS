@@ -5,6 +5,13 @@ import SwiftUI
 struct BC125ATCPSApp: App {
     @State private var monitor = ScannerMonitor()
 
+    init() {
+        // Open a new, empty document at launch instead of the Open panel: reading from the
+        // scanner is the usual first step, and an empty document skips the "replace?" question.
+        UserDefaults.standard.register(defaults: ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false])
+        TitlebarDoubleClick.install()
+    }
+
     var body: some Scene {
         DocumentGroup(newDocument: ScannerDocument()) { file in
             DocumentView(document: file.$document)
@@ -48,6 +55,8 @@ struct DocumentActions {
     var canUseScanner: Bool
     var importCSV: @MainActor () -> Void
     var exportCSV: @MainActor () -> Void
+    var importUniden: @MainActor () -> Void
+    var exportUniden: @MainActor () -> Void
 }
 
 extension FocusedValues {
@@ -64,6 +73,13 @@ struct ScannerCommands: Commands {
                 .disabled(actions == nil)
             Button("Export Channels as CSV…") { actions?.exportCSV() }
                 .disabled(actions == nil)
+            Divider()
+            Button("Import Uniden File…") { actions?.importUniden() }
+                .disabled(actions == nil)
+                .help("Replace this document with a .bc125at_ss file from Uniden's BC125AT software")
+            Button("Export as Uniden File…") { actions?.exportUniden() }
+                .disabled(actions == nil)
+                .help("Save a .bc125at_ss file that Uniden's BC125AT software can open")
         }
         CommandMenu("Scanner") {
             Button("Read from Scanner…") { actions?.read() }

@@ -36,7 +36,7 @@ func sampleConfig() -> ScannerConfig {
         let text = String(decoding: data, as: UTF8.self)
         #expect(text.contains(#""format" : "net.k9fgt.bc125at.config""#))
         #expect(text.contains(#""frequency" : "162.5500""#))
-        #expect(text.contains(#""tone" : "DCS 036""#))
+        #expect(text.contains(#""tone" : "D036""#))
         #expect(!text.contains(#""channel" : 3,"#), "empty channels aren't stored")
     }
 
@@ -63,7 +63,7 @@ func sampleConfig() -> ScannerConfig {
     @Test func roundTripsChannels() throws {
         let config = sampleConfig()
         let csv = CSVFormat.export(config)
-        #expect(csv.hasPrefix("Channel,Bank,Name,Frequency,Modulation,Tone,Delay,Lockout,Priority\r\n1,1,Air Guard,121.5000,AM,None,2,No,No\r\n"))
+        #expect(csv.hasPrefix("Channel,Bank,Name,Frequency,Modulation,Tone,Delay,Lockout,Priority\r\n1,1,Air Guard,121.5000,AM,CSQ,2,No,No\r\n"))
         #expect(csv.contains(#"2,1,"NOAA ""1"", main",162.5500,FM,No Tone,2,No,Yes"#))
         let imported = try CSVFormat.importChannels(from: csv)
         #expect(imported.problems.isEmpty)

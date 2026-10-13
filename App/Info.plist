@@ -47,5 +47,25 @@
 			</array>
 		</dict>
 	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>net.k9fgt.bc125at.uniden-ss</string>
+			<key>UTTypeDescription</key>
+			<string>Uniden BC125AT Programming File</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>bc125at_ss</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

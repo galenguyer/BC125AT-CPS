@@ -63,7 +63,7 @@ struct ToneMenuItems: View {
     var select: (ToneCode) -> Void
 
     var body: some View {
-        Button("None") { select(.none) }
+        Button(ToneCode.none.displayName) { select(.none) }
         Button("Search") { select(.search) }
         Button("No Tone") { select(.noTone) }
         Menu("CTCSS") {

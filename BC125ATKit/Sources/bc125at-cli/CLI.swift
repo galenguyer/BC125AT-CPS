@@ -13,9 +13,11 @@ let usage = """
       dump                     Read every setting and channel (read-only) and print the raw replies
       read <file.bc125at>      Read the whole configuration with ScannerSession (as the app does)
                                and save it as a .bc125at document
-      write <file.bc125at> [--yes] [--backup <file>]
-                               Show what writing the document would change; with --yes, back up
-                               the scanner (to --backup, if given), write, and verify
+      write <file> [--yes] [--backup <file>]
+                               Show what writing the document (.bc125at, or Uniden's .bc125at_ss)
+                               would change; with --yes, back up the scanner (to --backup, if
+                               given), write, and verify
+      convert <in> <out>       Convert between .bc125at and Uniden's .bc125at_ss (by extension)
       verify [--allow-write]   Run the Phase 0 protocol checks (SPEC.md §10) and print a report.
                                --allow-write also runs round-trip tests that modify, then restore,
                                spare empty channels and a few settings.
@@ -100,6 +102,12 @@ enum CLI {
         if command == "read" {
             guard let path = arguments.first else { fail("read needs an output file") }
             readDocument(to: path)
+            exit(0)
+        }
+        if command == "convert" {
+            guard arguments.count == 2 else { fail("convert needs an input and an output file") }
+            save(load(arguments[0]), to: arguments[1])
+            print("Converted \(arguments[0]) to \(arguments[1])")
             exit(0)
         }
         if command == "write" {
@@ -230,12 +238,7 @@ func readDocument(to path: String) {
 
 /// The app's write path (SPEC.md §7): validate, read, plan, back up, write, verify.
 func writeDocument(from path: String, confirmed: Bool, backupPath: String?) {
-    let document: ScannerConfig
-    do {
-        document = try NativeFormat.decode(Data(contentsOf: URL(fileURLWithPath: path)))
-    } catch {
-        fail("couldn't open \(path): \(error)")
-    }
+    var document = load(path)
     let errors = document.validate().filter { $0.severity == .error }
     guard errors.isEmpty else {
         for issue in errors { print("error: \(issue.location): \(issue.message)") }
@@ -246,6 +249,8 @@ func writeDocument(from path: String, confirmed: Bool, backupPath: String?) {
         defer { Task { await session.close() } }
         return try await session.readConfiguration()
     }
+    // Uniden's files have no global lockouts, so leave the scanner's alone.
+    if isUniden(path) { document.globalLockouts = current.globalLockouts }
     let plan = WritePlan(from: current, to: document)
     for adjustment in plan.adjustments { print("note: \(adjustment.title): \(adjustment.detail)") }
     guard !plan.isEmpty else { print("The scanner already matches \(path)."); return }
@@ -263,12 +268,29 @@ func writeDocument(from path: String, confirmed: Bool, backupPath: String?) {
     print("Wrote \(report.written) of \(plan.steps.count) changes.")
     for failure in report.failures { print("failed: \(failure.step.title): \(failure.reason)") }
     for mismatch in report.mismatches { print("mismatch after read-back: \(mismatch.title): \(mismatch.detail)") }
+    for stored in report.storedDifferently { print("stored differently: \(stored.title): \(stored.detail)") }
     print(report.succeeded ? "Verified: the scanner matches the document." : "The scanner does NOT fully match the document.")
 }
 
+func isUniden(_ path: String) -> Bool {
+    URL(fileURLWithPath: path).pathExtension.lowercased() == UnidenFormat.fileExtension
+}
+
+/// Opens a .bc125at document or a Uniden .bc125at_ss file.
+func load(_ path: String) -> ScannerConfig {
+    do {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        return isUniden(path) ? try UnidenFormat.decode(data) : try NativeFormat.decode(data)
+    } catch {
+        fail("couldn't open \(path): \(error)")
+    }
+}
+
+/// Saves as a .bc125at document, or as a Uniden .bc125at_ss file if the path says so.
 func save(_ config: ScannerConfig, to path: String) {
     do {
-        try NativeFormat.encode(config).write(to: URL(fileURLWithPath: path))
+        let data = isUniden(path) ? UnidenFormat.encode(config) : try NativeFormat.encode(config)
+        try data.write(to: URL(fileURLWithPath: path))
     } catch {
         fail("couldn't save \(path): \(error.localizedDescription)")
     }

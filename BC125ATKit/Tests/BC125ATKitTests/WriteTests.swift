@@ -115,6 +115,37 @@ import Testing
         #expect(mock.config[channel: 2].frequency == Frequency(parsing: "162.55"))
     }
 
+    /// On the Canada band plan the app can't predict snapping, so it writes frequencies as
+    /// entered and reports what the scanner stored instead of calling it a failure.
+    @Test func canadaPlanWritesAsEnteredAndReportsWhatWasStored() async throws {
+        let mock = MockScanner() // snaps to its own plan, which the document doesn't know
+        let session = ScannerSession(transport: mock)
+        var document = ScannerConfig()
+        document.metadata.bandPlanRegion = .canada
+        document[channel: 1] = Channel(name: "Off plan", frequency: Frequency(parsing: "154.0062"), modulation: .nfm)
+        document[channel: 2] = Channel(frequency: Frequency(parsing: "162.55"))
+
+        let issues = document.validate()
+        #expect(issues.contains { $0.location == .channel(1) && $0.severity == .warning && $0.message.contains("Canada") })
+        #expect(!issues.contains { $0.message.contains("will be stored as") })
+
+        let plan = WritePlan(from: ScannerConfig(), to: document)
+        #expect(plan.adjustments.isEmpty)
+        #expect(plan.target[channel: 1].frequency == Frequency(parsing: "154.0062"))
+
+        let report = try await session.write(plan)
+        #expect(report.succeeded)
+        #expect(report.storedDifferently == [.init(title: "Channel 1", detail: "154.0062 MHz was stored as 154.0025 MHz")])
+        #expect(report.acceptedConfig[channel: 1].frequency == Frequency(parsing: "154.0025"))
+        #expect(report.acceptedConfig[channel: 1].name == "Off plan")
+        #expect(report.acceptedConfig[channel: 2] == document[channel: 2])
+    }
+
+    @Test func rangesOnlyPlanKeepsInRangeFrequencies() {
+        #expect(BandPlan.rangesOnly.storedValue(for: Frequency(parsing: "154.0062")!) == Frequency(parsing: "154.0062"))
+        #expect(BandPlan.rangesOnly.storedValue(for: Frequency(parsing: "60")!) == nil)
+    }
+
     @Test func timeoutStopsTheWriteButLeavesProgramMode() async {
         let mock = MockScanner()
         mock.unresponsiveCommands = ["BLT"]
@@ -133,7 +164,7 @@ import Testing
         let config = sampleConfig()
         let channels = [config[channel: 1], config[channel: 2], .empty, config[channel: 75]]
         let text = ChannelClipboard.text(for: channels)
-        #expect(text.hasPrefix("Name\tFrequency\tModulation\tTone\tDelay\tLockout\tPriority\nAir Guard\t121.5000\tAM\tNone\t2\tNo\tNo\n"))
+        #expect(text.hasPrefix("Name\tFrequency\tModulation\tTone\tDelay\tLockout\tPriority\nAir Guard\t121.5000\tAM\tCSQ\t2\tNo\tNo\n"))
         #expect(ChannelClipboard.channels(from: text) == channels)
     }
 

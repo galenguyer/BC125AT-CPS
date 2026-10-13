@@ -13,6 +13,8 @@ scanner, edit its 500 channels and settings, and write the changes back.
   so it tells you when a frequency will be stored differently (for example, 154.0062 MHz is stored
   as 154.0025).
 - Saves configurations as `.bc125at` files, and imports and exports CSV (including bc125py's CSV).
+- Opens and saves files from Uniden's own BC125AT software (`.bc125at_ss`, **File ▸ Import Uniden File…**
+  and **Export as Uniden File…**), so you can move between the two.
 
 Requires macOS 15 or later and a BC125AT connected with a USB data cable. No driver is needed.
 
@@ -55,13 +57,15 @@ bc125at-cli info                       # model and firmware
 bc125at-cli read my-scanner.bc125at    # save the scanner's configuration
 bc125at-cli write my-scanner.bc125at   # show what would change
 bc125at-cli write my-scanner.bc125at --yes --backup before.bc125at
+bc125at-cli write my-scanner.bc125at_ss    # Uniden's files work too
+bc125at-cli convert my-scanner.bc125at_ss my-scanner.bc125at   # convert formats
 bc125at-cli release                    # take a stuck scanner out of program mode
 ```
 
 ## Building from source
 
 ```sh
-cd BC125ATKit && swift test            # the protocol and model library, with 60 tests
+cd BC125ATKit && swift test            # the protocol and model library, with 65 tests
 open "BC125AT CPS.xcodeproj"           # the app
 scripts/release.sh                     # test, archive, sign ad hoc, and zip into dist/
 ```

@@ -4,7 +4,8 @@ extension ScannerConfig {
     /// What the scanner will actually hold after this configuration is written (SPEC.md §3):
     /// frequencies snapped to the band plan, names cut to 16 characters with trailing spaces
     /// removed, and empty channels in the scanner's empty state. App-only fields are unchanged.
-    public func storedOnScanner(bandPlan: BandPlan = .bc125at) -> ScannerConfig {
+    public func storedOnScanner(bandPlan: BandPlan? = nil) -> ScannerConfig {
+        let bandPlan = bandPlan ?? channelPlan
         var result = self
         for index in result.channels.indices {
             var channel = result.channels[index]
@@ -59,7 +60,8 @@ public struct WritePlan: Sendable {
 
     public func steps(in section: Section) -> [Step] { steps.filter { $0.section == section } }
 
-    public init(from current: ScannerConfig, to document: ScannerConfig, bandPlan: BandPlan = .bc125at) {
+    /// Predicts stored frequencies with `bandPlan`, or the document's own `channelPlan` if nil.
+    public init(from current: ScannerConfig, to document: ScannerConfig, bandPlan: BandPlan? = nil) {
         let target = document.storedOnScanner(bandPlan: bandPlan)
         self.target = target
         var steps: [Step] = []
@@ -75,7 +77,7 @@ public struct WritePlan: Sendable {
         if let d = change(s0.backlight, s1.backlight, \.displayName) { add(.settings, "Backlight", d, "BLT,\(s1.backlight.rawValue)") }
         if let d = change(s0.batteryChargeHours, s1.batteryChargeHours, { "\($0) h" }) { add(.settings, "Battery charge time", d, "BSV,\(s1.batteryChargeHours)") }
         if s0.keyBeep != s1.keyBeep || s0.keyLock != s1.keyLock {
-            add(.settings, "Key beep and lock", "\(s0.keyBeep.displayName), lock \(onOff(s0.keyLock)) → \(s1.keyBeep.displayName), lock \(onOff(s1.keyLock))",
+            add(.settings, "Key beep and lock", "Beep \(s0.keyBeep.displayName), Lock \(onOff(s0.keyLock)) → Beep \(s1.keyBeep.displayName), Lock \(onOff(s1.keyLock))",
                 "KBP,\(s1.keyBeep.rawValue),\(Wire.flag(s1.keyLock))")
         }
         if let d = change(s0.priorityMode, s1.priorityMode, \.displayName) { add(.settings, "Priority mode", d, "PRI,\(s1.priorityMode.rawValue)") }
@@ -92,7 +94,7 @@ public struct WritePlan: Sendable {
         // Search and Close Call
         let (r0, r1) = (current.search, target.search)
         if r0.delay != r1.delay || r0.codeSearch != r1.codeSearch {
-            add(.search, "Search delay and code search", "\(r0.delay.displayName), \(onOff(r0.codeSearch)) → \(r1.delay.displayName), \(onOff(r1.codeSearch))",
+            add(.search, "Search delay and code search", "Delay \(r0.delay.displayName), Code Search \(onOff(r0.codeSearch)) → Delay \(r1.delay.displayName), Code Search \(onOff(r1.codeSearch))",
                 "SCO,\(r1.delay.rawValue),\(Wire.flag(r1.codeSearch))")
         }
         if let d = change(r0.serviceGroupsEnabled, r1.serviceGroupsEnabled, { Self.describeEnabled($0, names: ServiceSearchGroup.allCases.map(\.displayName)) }) {
@@ -148,41 +150,41 @@ public struct WritePlan: Sendable {
         if new.isEmpty { return "Clear (was \(describe(old)))" }
         if old.isEmpty { return describe(new) }
         var parts: [String] = []
-        if old.name != new.name { parts.append("name \(old.name.debugDescription) → \(new.name.debugDescription)") }
-        if old.frequency != new.frequency { parts.append("\(old.frequency?.description ?? "") → \(new.frequency?.description ?? "") MHz") }
-        if old.modulation != new.modulation { parts.append("\(old.modulation.displayName) → \(new.modulation.displayName)") }
-        if old.tone != new.tone { parts.append("tone \(old.tone.displayName) → \(new.tone.displayName)") }
-        if old.delay != new.delay { parts.append("delay \(old.delay.displayName) → \(new.delay.displayName)") }
-        if old.lockedOut != new.lockedOut { parts.append(new.lockedOut ? "lock out" : "unlock") }
-        if old.priority != new.priority { parts.append(new.priority ? "priority on" : "priority off") }
+        if old.name != new.name { parts.append("Name \(old.name.debugDescription) → \(new.name.debugDescription)") }
+        if old.frequency != new.frequency { parts.append("Frequency \(old.frequency?.description ?? "") → \(new.frequency?.description ?? "") MHz") }
+        if old.modulation != new.modulation { parts.append("Modulation \(old.modulation.displayName) → \(new.modulation.displayName)") }
+        if old.tone != new.tone { parts.append("Tone \(old.tone.displayName) → \(new.tone.displayName)") }
+        if old.delay != new.delay { parts.append("Delay \(old.delay.displayName) → \(new.delay.displayName)") }
+        if old.lockedOut != new.lockedOut { parts.append(new.lockedOut ? "Locked Out" : "Unlocked") }
+        if old.priority != new.priority { parts.append(new.priority ? "Priority On" : "Priority Off") }
         return parts.joined(separator: ", ")
     }
 
     static func describe(_ channel: Channel) -> String {
-        guard let frequency = channel.frequency else { return "empty" }
+        guard let frequency = channel.frequency else { return "Empty" }
         var text = channel.name.isEmpty ? "" : "\(channel.name) "
         text += "\(frequency) MHz \(channel.modulation.displayName)"
         if channel.tone != .none { text += ", \(channel.tone.displayName)" }
-        if channel.lockedOut { text += ", locked out" }
-        if channel.priority { text += ", priority" }
+        if channel.lockedOut { text += ", Locked Out" }
+        if channel.priority { text += ", Priority" }
         return text
     }
 
     static func describeBanks(_ enabled: [Bool]) -> String {
         let banks = enabled.indices.filter { enabled[$0] }.map { "\($0 + 1)" }
-        return banks.isEmpty ? "none" : banks.joined(separator: ", ")
+        return banks.isEmpty ? "None" : banks.joined(separator: ", ")
     }
 
     static func describeEnabled(_ enabled: [Bool], names: [String]) -> String {
         let on = enabled.indices.filter { enabled[$0] }.map { names[$0] }
-        if on.count == enabled.count { return "all" }
-        return on.isEmpty ? "none" : on.joined(separator: ", ")
+        if on.count == enabled.count { return "All" }
+        return on.isEmpty ? "None" : on.joined(separator: ", ")
     }
 
     static func describeCloseCall(_ cc: CloseCallSettings) -> String {
         let bands = describeEnabled(cc.bandsEnabled, names: CloseCallBand.allCases.map(\.displayName))
-        return "\(cc.mode.displayName) (beep \(onOff(cc.alertBeep)), light \(onOff(cc.alertLight)), bands \(bands), lockout \(onOff(cc.lockOutHits)))"
+        return "\(cc.mode.displayName) (Beep \(onOff(cc.alertBeep)), Light \(onOff(cc.alertLight)), Bands \(bands), Lockout \(onOff(cc.lockOutHits)))"
     }
 }
 
-private func onOff(_ value: Bool) -> String { value ? "on" : "off" }
+private func onOff(_ value: Bool) -> String { value ? "On" : "Off" }

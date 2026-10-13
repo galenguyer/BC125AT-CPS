@@ -74,6 +74,10 @@ struct WriteSheet: View {
             }
         }
         .frame(minHeight: 160, idealHeight: 300, maxHeight: 360)
+        if plan.target.metadata.bandPlanRegion == .canada {
+            Text("The scanner is set to the Canada band plan, so frequencies are written as entered. Any the scanner stores differently are listed afterwards.")
+                .font(.callout).foregroundStyle(.orange)
+        }
         Text("The scanner's current contents are backed up first, so you can go back to them.")
             .font(.callout).foregroundStyle(.secondary)
         buttons {
@@ -92,6 +96,14 @@ struct WriteSheet: View {
             if !plan.adjustments.isEmpty {
                 Text("\(plan.adjustments.count) \(plan.adjustments.count == 1 ? "value was" : "values were") stored as the scanner allows, and the document was updated to match.")
                     .foregroundStyle(.secondary)
+            }
+            if !report.storedDifferently.isEmpty {
+                Text("The scanner stored \(report.storedDifferently.count == 1 ? "this frequency" : "these frequencies") differently than sent, and the document was updated to match:")
+                List(report.storedDifferently, id: \.self) { adjustment in
+                    Label("\(adjustment.title): \(adjustment.detail)", systemImage: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                }
+                .frame(minHeight: 60, maxHeight: 200)
             }
         } else {
             Label("Some Changes Didn't Take", systemImage: "exclamationmark.triangle.fill")

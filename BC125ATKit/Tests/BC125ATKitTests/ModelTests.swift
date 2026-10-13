@@ -54,7 +54,7 @@ import Testing
 
     @Test(arguments: [
         ("100.0", 76), ("100", 76), ("ctcss_100.0", 76), ("CTCSS 100.0 Hz", 76), ("D023", 128), ("dcs_23", 128),
-        ("023N", 128), ("none", 0), ("No Tone", 240), ("search", 127),
+        ("023N", 128), ("none", 0), ("CSQ", 0), ("No Tone", 240), ("search", 127),
     ])
     func parsesShorthand(text: String, code: Int) {
         #expect(ToneCode(parsing: text)?.code == code)

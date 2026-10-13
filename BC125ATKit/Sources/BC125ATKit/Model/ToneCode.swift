@@ -54,10 +54,11 @@ public enum ToneCode: Hashable, Sendable {
         }
     }
 
-    /// `None`, `Search`, `No Tone`, `CTCSS 100.0`, `DCS 023`.
+    /// `CSQ` (carrier squelch: no tone, opens for any signal), `Search`, `No Tone`, `CTCSS 100.0`,
+    /// `DCS 023`.
     public var displayName: String {
         switch self {
-        case .none: return "None"
+        case .none: return "CSQ"
         case .search: return "Search"
         case .noTone: return "No Tone"
         case .ctcss(let index):
@@ -74,7 +75,7 @@ public enum ToneCode: Hashable, Sendable {
     public init?(parsing text: String) {
         let compact = text.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "." }
         switch compact {
-        case "", "none", "off", "all": self = .none; return
+        case "", "csq", "none", "off", "all": self = .none; return
         case "search", "srch": self = .search; return
         case "notone": self = .noTone; return
         default: break
@@ -100,15 +101,51 @@ public enum ToneCode: Hashable, Sendable {
     }
 }
 
+extension ToneCode {
+    /// How Uniden's software writes a tone: `Off`, `Srch`, `NoTone`, `C110.9`, `D023`.
+    public var unidenName: String {
+        switch self {
+        case .none: return "Off"
+        case .search: return "Srch"
+        case .noTone: return "NoTone"
+        case .ctcss(let index):
+            let tenths = Self.ctcssTenthsHz[index]
+            return "C\(tenths / 10).\(tenths % 10)"
+        case .dcs(let index):
+            let code = String(Self.dcsCodes[index])
+            return "D" + String(repeating: "0", count: max(0, 3 - code.count)) + code
+        }
+    }
+
+    /// Reads exactly the forms `unidenName` writes.
+    public init?(unidenName text: String) {
+        switch text {
+        case "Off": self = .none
+        case "Srch": self = .search
+        case "NoTone": self = .noTone
+        default:
+            if text.hasPrefix("C"), let hertz = Double(text.dropFirst()),
+               let index = Self.ctcssTenthsHz.firstIndex(of: Int((hertz * 10).rounded())) {
+                self = .ctcss(index: index)
+            } else if text.hasPrefix("D"), let code = Int(text.dropFirst()), let index = Self.dcsCodes.firstIndex(of: code) {
+                self = .dcs(index: index)
+            } else {
+                return nil
+            }
+        }
+    }
+}
+
 extension ToneCode: CustomStringConvertible {
     public var description: String { displayName }
 }
 
-/// Encoded as its display name (`"CTCSS 100.0"`) so saved files are readable.
+/// Encoded the way Uniden's software writes tones (`Off`, `Srch`, `NoTone`, `C110.9`, `D023`),
+/// so saved files match Uniden's `.bc125at_ss` files.
 extension ToneCode: Codable {
     public init(from decoder: any Decoder) throws {
         let text = try decoder.singleValueContainer().decode(String.self)
-        guard let tone = ToneCode(parsing: text) else {
+        guard let tone = ToneCode(unidenName: text) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid tone \(text.debugDescription)"))
         }
         self = tone
@@ -116,6 +153,6 @@ extension ToneCode: Codable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(displayName)
+        try container.encode(unidenName)
     }
 }
