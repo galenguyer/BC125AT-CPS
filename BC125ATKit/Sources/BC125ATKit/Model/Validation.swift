@@ -29,14 +29,37 @@ public struct ValidationIssue: Hashable, Sendable, Identifiable {
 extension ScannerConfig {
     /// Every problem in the configuration, in channel order then section order (SPEC.md §3, §4).
     /// Checks frequencies against `bandPlan`, or this configuration's `channelPlan` if nil.
-    public func validate(bandPlan: BandPlan? = nil) -> [ValidationIssue] {
+    /// `duplicateFrequencies` turns the duplicate-frequency warnings on or off.
+    public func validate(bandPlan: BandPlan? = nil, duplicateFrequencies: Bool = true) -> [ValidationIssue] {
         let bandPlan = bandPlan ?? channelPlan
         var issues: [ValidationIssue] = []
         func add(_ severity: ValidationIssue.Severity, _ location: ValidationIssue.Location, _ message: String) {
             issues.append(ValidationIssue(severity: severity, location: location, message: message))
         }
 
-        for (offset, channel) in channels.enumerated() where !channel.isEmpty {
+        // Duplicate frequencies are allowed (the same channel in several banks is common), but
+        // flagged on each copy, as Uniden's software does. Compared as stored, so two values that
+        // snap to the same channel count as duplicates.
+        var channelsByFrequency: [Frequency: [Int]] = [:]
+        var duplicates: [Int: String] = [:]
+        for (offset, channel) in channels.enumerated() {
+            guard let frequency = channel.frequency else { continue }
+            channelsByFrequency[bandPlan.storedValue(for: frequency) ?? frequency, default: []].append(offset + 1)
+        }
+        for (frequency, numbers) in channelsByFrequency where duplicateFrequencies && numbers.count > 1 {
+            for number in numbers {
+                let others = numbers.filter { $0 != number }
+                var list = others.prefix(4).map { other in
+                    let name = self[channel: other].name
+                    return name.isEmpty ? "channel \(other)" : "channel \(other) “\(name)”"
+                }
+                if others.count > 4 { list.append("\(others.count - 4) more") }
+                let joined = list.count < 2 ? list.joined() : list.dropLast().joined(separator: ", ") + " and " + list.last!
+                duplicates[number] = "\(frequency) MHz is also on \(joined)"
+            }
+        }
+
+        for (offset, channel) in channels.enumerated() where !channel.isEmpty || !channel.name.isEmpty {
             for issue in channel.validate(bandPlan: bandPlan) {
                 add(issue.severity, .channel(offset + 1), issue.message)
             }
@@ -44,6 +67,9 @@ extension ScannerConfig {
             if metadata.bandPlanRegion == .canada, let frequency = channel.frequency,
                let usa = BandPlan.bc125at.storedValue(for: frequency), usa != frequency {
                 add(.warning, .channel(offset + 1), "\(frequency) MHz isn't on the USA channel plan, so it may not be on the Canada plan either. The scanner may store a nearby frequency; you'll see what it stored after writing")
+            }
+            if let duplicate = duplicates[offset + 1] {
+                add(.warning, .channel(offset + 1), duplicate)
             }
         }
 
@@ -114,6 +140,9 @@ extension Channel {
         }
         if name.hasSuffix(" ") {
             issues.append((.warning, "Trailing spaces in the name will be removed by the scanner"))
+        }
+        if frequency == nil, !name.isEmpty {
+            issues.append((.warning, "Has a name but no frequency, so it won't be written to the scanner"))
         }
         if let frequency {
             if let stored = bandPlan.storedValue(for: frequency) {

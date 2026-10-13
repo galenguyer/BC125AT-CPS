@@ -31,24 +31,24 @@ struct ChannelInspector: View {
                     config.setFrequency(frequency, ofChannel: number)
                 }
                 .accessibilityLabel("Frequency in megahertz")
-                if let frequency = channel.frequency, let stored = BandPlan.bc125at.storedValue(for: frequency), stored != frequency {
+                if let frequency = channel.frequency, let stored = config.channelPlan.storedValue(for: frequency), stored != frequency {
                     LabeledContent("Stored As", value: "\(stored.megahertzString) MHz")
                         .foregroundStyle(.orange)
                 }
-                if !channel.isEmpty {
-                    CommitTextField(title: "Name", value: channel.name) { text in
-                        edit(number) { $0.name = text }
-                        return true
-                    }
-                    .accessibilityLabel("Name")
-                    LabeledContent("Characters", value: "\(channel.name.count) of \(Channel.maxNameLength)")
-                        .foregroundStyle(channel.name.count > Channel.maxNameLength ? .red : .secondary)
+                CommitTextField(title: "Name", value: channel.name) { text in
+                    edit(number) { $0.name = text }
+                    return true
                 }
+                .accessibilityLabel("Name")
+                LabeledContent("Characters", value: "\(channel.name.count) of \(Channel.maxNameLength)")
+                    .foregroundStyle(channel.name.count > Channel.maxNameLength ? .red : .secondary)
             } header: {
                 Text("Channel \(number) · Bank \(bank)\(bankName.isEmpty ? "" : " (\(bankName))")")
             } footer: {
                 if channel.isEmpty {
-                    Text("This channel is empty. Type a frequency to add one.").foregroundStyle(.secondary)
+                    Text(channel.name.isEmpty ? "This channel is empty. Type a name or frequency to start one."
+                         : "Add a frequency to use this channel. Until then it isn't written to the scanner.")
+                        .foregroundStyle(.secondary)
                 }
             }
             if !channel.isEmpty {

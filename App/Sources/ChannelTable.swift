@@ -168,9 +168,27 @@ final class ChannelNSTableView: NSTableView {
         }
     }
 
-    /// Delete clears the selection, Return starts editing it, and typing digits jumps to that
-    /// channel number.
+    /// Clicking a cell selects just that cell (except in the # column, which selects the row).
+    /// The coordinator is told before AppKit handles the click, which still selects the row
+    /// underneath and starts drags as usual.
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        coordinator?.willClick(row: row(at: point), column: column(at: point), modifiers: event.modifierFlags)
+        super.mouseDown(with: event)
+    }
+
+    /// A single click on a name or frequency selects the cell rather than editing it; typing,
+    /// Return or a double-click start editing.
+    override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
+        if responder is NSTextField, event?.type == .leftMouseDown { return false }
+        return super.validateProposedFirstResponder(responder, for: event)
+    }
+
+    /// With a cell selected, keys act on the cell (see `Coordinator.handleCellKey`). Otherwise
+    /// Delete clears the selected channels, Return edits the selected row's name, and typing
+    /// digits jumps to that channel number.
     override func keyDown(with event: NSEvent) {
+        if coordinator?.handleCellKey(event) == true { return }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
         let characters = event.charactersIgnoringModifiers ?? ""
         if event.specialKey == .delete || event.specialKey == .deleteForward, !selectedRowIndexes.isEmpty {
@@ -195,6 +213,21 @@ final class ChannelCell: NSTableCellView, NSMenuDelegate {
     /// Text fields fill the cell; buttons and pop-ups keep their natural width.
     var fillsWidth = false
     weak var coordinator: ChannelTable.Coordinator?
+    /// The selected cell, outlined in the accent colour.
+    var isFocused = false {
+        didSet { if isFocused != oldValue { needsDisplay = true } }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard isFocused else { return }
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1.5), xRadius: 4, yRadius: 4)
+        NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
+        path.fill()
+        NSColor.controlAccentColor.setStroke()
+        path.lineWidth = 2
+        path.stroke()
+    }
 
     override func layout() {
         super.layout()
@@ -263,6 +296,8 @@ extension ChannelTable {
         /// Digits typed so far to jump to a channel, and when the last one was typed.
         private var typedNumber = ""
         private var typedAt = Date.distantPast
+        /// The selected cell, when one is (cell mode). `nil` means whole rows are selected.
+        private var focusedCell: (number: Int, column: ChannelColumn)?
         /// The cell a Tab or Shift-Tab moved to, in case the commit reloads the rows.
         private var tabMove: (number: Int, column: ChannelColumn, at: Date)?
         private var scope: Int?
@@ -325,6 +360,7 @@ extension ChannelTable {
             if table.selectedRowIndexes != selected { table.selectRowIndexes(selected, byExtendingSelection: false) }
 
             if scope != parent.scope {
+                if scope != nil { setFocus(nil) }
                 if scope != nil, !rows.isEmpty { table.scrollRowToVisible(0) }
                 scope = parent.scope
             }
@@ -355,8 +391,7 @@ extension ChannelTable {
         @objc func doubleClicked(_ sender: Any?) {
             guard let table, table.clickedRow >= 0, table.clickedColumn >= 0 else { return }
             let column = table.tableColumns[table.clickedColumn].identifier.rawValue
-            let target = column == ChannelColumn.frequency.rawValue || rows[table.clickedRow].channel.isEmpty
-                ? ChannelColumn.frequency : .name
+            let target = column == ChannelColumn.frequency.rawValue ? ChannelColumn.frequency : .name
             guard let index = table.tableColumns.firstIndex(where: { $0.identifier == target.identifier }) else { return }
             table.editColumn(index, row: table.clickedRow, with: nil, select: true)
         }
@@ -442,8 +477,8 @@ extension ChannelTable {
             case .name:
                 guard let field = cell.textField else { return }
                 if field.currentEditor() == nil { field.stringValue = channel.name }
+                // An empty channel can be started from its name; it's written once it has a frequency.
                 field.placeholderString = unused ? "" : "No name"
-                field.isEnabled = !unused
                 field.setAccessibilityLabel("Channel \(number) name")
             case .frequency:
                 guard let field = cell.textField else { return }
@@ -476,6 +511,7 @@ extension ChannelTable {
                 box.state = channel.priority ? .on : .off
                 box.setAccessibilityLabel("Channel \(number) priority")
             }
+            cell.isFocused = focusedCell?.number == number && focusedCell?.column == kind
             cell.needsLayout = true
         }
 
@@ -569,10 +605,9 @@ extension ChannelTable {
         }
 
         /// The editable cell after (or before) `column` of channel `number`, in display order.
-        /// An empty channel's name can't be edited, so its row only offers the frequency.
         private func neighbour(of number: Int, _ column: ChannelColumn, forward: Bool) -> (number: Int, column: ChannelColumn)? {
             guard let index = rows.firstIndex(where: { $0.number == number }) else { return nil }
-            func cells(_ row: ChannelRow) -> [ChannelColumn] { row.channel.isEmpty ? [.frequency] : [.name, .frequency] }
+            func cells(_ row: ChannelRow) -> [ChannelColumn] { [.name, .frequency] }
             var order: [(Int, ChannelColumn)] = []
             for row in rows { order += cells(row).map { (row.number, $0) } }
             // The current cell may not be in the list (a name just cleared by emptying the row).
@@ -582,19 +617,121 @@ extension ChannelTable {
             return order.indices.contains(next) ? order[next] : nil
         }
 
-        /// Selects channel `number`'s row and starts editing `column` in it.
-        func beginEditing(_ number: Int, _ column: ChannelColumn) {
+        /// Selects channel `number`'s `column` cell and starts editing it. `typing` replaces the
+        /// field's text, as typing into a selected spreadsheet cell does.
+        func beginEditing(_ number: Int, _ column: ChannelColumn, typing: String? = nil) {
             guard let table, let row = rows.firstIndex(where: { $0.number == number }),
                   let columnIndex = table.tableColumns.firstIndex(where: { $0.identifier == column.identifier }) else { return }
+            setFocus((number, column))
             if table.selectedRowIndexes != [row] { table.selectRowIndexes([row], byExtendingSelection: false) }
             table.scrollRowToVisible(row)
             table.editColumn(columnIndex, row: row, with: nil, select: true)
+            if let typing, let editor = table.window?.firstResponder as? NSTextView {
+                editor.insertText(typing, replacementRange: editor.selectedRange())
+            }
         }
 
-        /// Return: edit the selected row's name, or its frequency if the channel is empty.
+        // MARK: Cell selection
+
+        /// The columns a cell can be selected in, left to right.
+        private static let selectableColumns: [ChannelColumn] = [.name, .frequency, .modulation, .tone, .delay, .lockout, .priority]
+
+        /// Moves the cell selection (nil for whole rows), redrawing the old and new cells.
+        private func setFocus(_ new: (number: Int, column: ChannelColumn)?) {
+            guard let table else { return }
+            let old = focusedCell
+            focusedCell = new
+            // In cell mode the row stays selected underneath (for the inspector, menus and
+            // drags) but isn't highlighted; the cell's outline shows the selection instead.
+            let style: NSTableView.SelectionHighlightStyle = new == nil ? .regular : .none
+            if table.selectionHighlightStyle != style { table.selectionHighlightStyle = style }
+            for cell in [old, new].compactMap({ $0 }) {
+                guard let row = rows.firstIndex(where: { $0.number == cell.number }),
+                      let column = table.tableColumns.firstIndex(where: { $0.identifier == cell.column.identifier }),
+                      let view = table.view(atColumn: column, row: row, makeIfNecessary: false) as? ChannelCell else { continue }
+                view.isFocused = new?.number == cell.number && new?.column == cell.column
+            }
+        }
+
+        /// Called just before AppKit handles a click: a plain click on a cell selects that cell;
+        /// the # column, Shift or Command, or empty space go back to whole-row selection.
+        func willClick(row: Int, column: Int, modifiers: NSEvent.ModifierFlags) {
+            guard let table, row >= 0, row < rows.count, column >= 0,
+                  let kind = ChannelColumn(rawValue: table.tableColumns[column].identifier.rawValue),
+                  Self.selectableColumns.contains(kind), modifiers.intersection([.shift, .command]).isEmpty else {
+                setFocus(nil)
+                return
+            }
+            setFocus((rows[row].number, kind))
+        }
+
+        /// Keys with a cell selected. Returns false to let the table handle the key as usual.
+        func handleCellKey(_ event: NSEvent) -> Bool {
+            guard let table, let focus = focusedCell, let row = rows.firstIndex(where: { $0.number == focus.number }),
+                  let column = Self.selectableColumns.firstIndex(of: focus.column) else { return false }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
+            let isText = focus.column == .name || focus.column == .frequency
+            func move(row newRow: Int, column newColumn: Int) {
+                let target = (rows[min(max(newRow, 0), rows.count - 1)].number,
+                              Self.selectableColumns[min(max(newColumn, 0), Self.selectableColumns.count - 1)])
+                setFocus(target)
+                if let index = rows.firstIndex(where: { $0.number == target.0 }) {
+                    table.selectRowIndexes([index], byExtendingSelection: false)
+                    table.scrollRowToVisible(index)
+                }
+            }
+            if event.keyCode == 53 { // Escape: back to selecting the whole row
+                setFocus(nil)
+                return true
+            }
+            guard modifiers.subtracting(.shift).isEmpty else { return false }
+            switch event.specialKey {
+            case .upArrow?: move(row: row - 1, column: column); return true
+            case .downArrow?: move(row: row + 1, column: column); return true
+            case .leftArrow?: move(row: row, column: column - 1); return true
+            case .rightArrow?, .tab?: move(row: row, column: column + 1); return true
+            case .backTab?: move(row: row, column: column - 1); return true
+            case .carriageReturn?, .enter?: activate(focus); return true
+            case .delete?, .deleteForward?: clear(focus); return true
+            default: break
+            }
+            if event.characters == " ", !isText { activate(focus); return true }
+            // Typing into a name or frequency starts editing it with what was typed.
+            if isText, event.specialKey == nil, let typed = event.characters, !typed.isEmpty,
+               typed.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7F }) {
+                beginEditing(focus.number, focus.column, typing: typed)
+                return true
+            }
+            return false
+        }
+
+        /// Return (or Space on a control): edit a text cell, open a pop-up, or toggle a checkbox.
+        private func activate(_ focus: (number: Int, column: ChannelColumn)) {
+            switch focus.column {
+            case .name, .frequency:
+                beginEditing(focus.number, focus.column)
+            default:
+                guard let table, let row = rows.firstIndex(where: { $0.number == focus.number }),
+                      let column = table.tableColumns.firstIndex(where: { $0.identifier == focus.column.identifier }),
+                      let control = (table.view(atColumn: column, row: row, makeIfNecessary: false) as? ChannelCell)?.control as? NSControl,
+                      !control.isHidden else { return }
+                control.performClick(nil)
+            }
+        }
+
+        /// Delete with a cell selected: clears a name, or a frequency (which empties the channel).
+        private func clear(_ focus: (number: Int, column: ChannelColumn)) {
+            switch focus.column {
+            case .name: edit([focus.number]) { $0.name = "" }
+            case .frequency: if !config[channel: focus.number].isEmpty { parent.config.setFrequency(nil, ofChannel: focus.number) }
+            default: NSSound.beep()
+            }
+        }
+
+        /// Return: edit the selected row's name.
         func editSelectedRow() -> Bool {
             guard let table, table.selectedRowIndexes.count == 1, let row = table.selectedRowIndexes.first, row < rows.count else { return false }
-            beginEditing(rows[row].number, rows[row].channel.isEmpty ? .frequency : .name)
+            beginEditing(rows[row].number, .name)
             return true
         }
 
@@ -608,6 +745,7 @@ extension ChannelTable {
                 if typedNumber.count >= 3 { NSSound.beep() }
                 return
             }
+            if let focus = focusedCell { setFocus((number, focus.column)) }
             table.selectRowIndexes([row], byExtendingSelection: false)
             table.scrollRowToVisible(row)
         }

@@ -225,7 +225,7 @@ struct Frequency: Comparable { var hundredHz: UInt32 }   // = the wire value; ex
 enum ToneCode { case none, search, noTone, ctcss(index: Int), dcs(index: Int) }  // index into the §3.2 tables; raw code is computed
 ```
 
-Each model type has its own `validate() -> [ValidationIssue]`. An issue is either an `.error`, which blocks writing, or a `.warning`, which only advises.
+Each model type has its own `validate() -> [ValidationIssue]`. An issue is either an `.error`, which blocks writing, or a `.warning`, which only advises. Channels that share a frequency (compared as the scanner would store them) each get a warning naming the others, e.g. "121.5000 MHz is also on channel 51 “GUARD”"; as in Uniden's software, duplicates are allowed, since the same channel in several banks is common. The warnings can be turned off in the app's Settings (⌘,), "Warn about duplicate frequencies".
 
 ## 5. File Formats
 
@@ -328,11 +328,12 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Cells edit inline. The frequency field accepts `162.55`, `162550k`, and similar forms and normalizes them. Invalid cells get a red badge with a tooltip.
 - Selecting several rows allows bulk edits from the context menu: modulation, tone, delay, lock out / unlock, priority (single channel), and Clear. Delete clears the selected channels.
 - Making a channel priority clears the other priority channel in its bank, as the scanner itself would.
-- Typing a frequency into an empty row creates an active channel (empty channels are locked out on the scanner); clearing a frequency empties the channel. Text cells commit on Return or when focus leaves, so each edit is one undo step.
+- An empty row can be started from either cell. Typing a frequency creates an active channel (empty channels are locked out on the scanner), keeping any name already typed. A name without a frequency is kept in the document with a warning, but isn't written until it has a frequency. Clearing a frequency empties the channel. Text cells commit on Return or when focus leaves, so each edit is one undo step.
 - Copy, cut and paste use TSV on the pasteboard (`ChannelClipboard`), so they work with Numbers and Excel. Pasting starts at the first selected channel and fills consecutive slots, stopping at 500. Pasted text may have a header row (columns matched by name, as for CSV), or be in Name, Frequency, Modulation, Tone, Delay, Lockout, Priority order, or be a single column of frequencies.
 - Rows can be dragged (one or several) onto another row, which moves them to consecutive slots starting there. Channels already in those slots aren't lost; they move into the slots that were vacated (`ScannerConfig.moveChannels`). Dropping onto a bank in the sidebar moves them into that bank's first empty slots, or beeps if there isn't room. Dragging into a *different* document's window copies the channels instead, since channel numbers mean nothing there. Each drop is one undo step.
 - Cmd-F filters by name or frequency.
-- Keyboard: Return edits the selected row (its name, or the frequency of an empty channel). While editing, Tab and Shift-Tab commit and move Name → Frequency → the next row's Name, and back; Escape cancels. Typing a channel number ("4", "5", "8" in quick succession) jumps to it.
+- **Cell selection**, like a spreadsheet: clicking a cell selects just that cell (outlined in the accent colour; the row stays selected underneath for the inspector, menus and drags, but isn't highlighted). Clicking the # column, or Shift/⌘-clicking, selects whole rows. With a cell selected: typing into a name or frequency starts editing it with what was typed; Return edits it, opens a pop-up or toggles a checkbox (Space does too, on controls); arrows and Tab move between cells; Delete clears a name or frequency; Escape goes back to whole-row selection. A single click no longer starts editing; double-click does.
+- Keyboard with rows selected: Return edits the selected row's name; typing a channel number ("4", "5", "8" in quick succession) jumps to it. While editing, Tab and Shift-Tab commit and move Name → Frequency → the next row's Name, and back; Escape cancels.
 - Every edit can be undone through the document's `UndoManager`.
 
 ### 8.3 Search & Close Call
@@ -375,7 +376,7 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 4. ✅ **Write**: diff review, writing only changes, read-back checks, and backups. Verified against a real BC125AT: from the CLI (5 changes, then restoring the original) and from the app (pasting channels, an off-plan frequency that was adjusted, clearing channels, and the up-to-date case). Each test ended with a dump identical to the backup.
 5. ✅ **Polish**: drag reordering (within a table, onto a sidebar bank, and between documents), inspector, VoiceOver labelling, app icon, Settings window, release script, README and NOTICE.
 6. ✅ **Uniden files**: import and export `.bc125at_ss` (§5.1), checked against a real scanner with three files from Uniden's software. Also: the AppKit channel table, title-bar double-click zoom, and a blank document at launch instead of the Open panel.
-7. ✅ **Live and keyboard** (app 0.2): the live bar (§8.6) on `GLG`, which turned out to work (§3.7); Compare with Scanner; Return, Tab and type-a-number in the channel table.
+7. ✅ **Live and keyboard** (app 0.2): the live bar (§8.6) on `GLG`, which turned out to work (§3.7); Compare with Scanner; Return, Tab and type-a-number in the channel table. After 0.2: spreadsheet-style cell selection, starting a channel from its name, and duplicate-frequency warnings (with a setting to turn them off).
 
 ## 11. Decisions
 | Topic | Decision |

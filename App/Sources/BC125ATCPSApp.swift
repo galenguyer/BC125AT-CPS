@@ -28,10 +28,21 @@ struct BC125ATCPSApp: App {
 
 /// App preferences (⌘,).
 struct AppSettingsView: View {
+    static let duplicateWarningsKey = "warnAboutDuplicateFrequencies"
+
     @AppStorage(BackupStore.retentionKey) private var retention = BackupStore.defaultRetention
+    @AppStorage(duplicateWarningsKey) private var duplicateWarnings = true
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Warn about duplicate frequencies", isOn: $duplicateWarnings)
+            } header: {
+                Text("Checks")
+            } footer: {
+                Text("Flags channels that share a frequency with another channel. Duplicates are always allowed; this only controls the warnings.")
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 Stepper("Keep the newest \(retention) backups", value: $retention, in: 10...500, step: 10)
                 Button("Show Backups in Finder") { BackupStore.reveal() }

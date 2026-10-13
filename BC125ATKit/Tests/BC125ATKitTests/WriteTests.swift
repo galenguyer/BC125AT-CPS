@@ -141,6 +141,15 @@ import Testing
         #expect(report.acceptedConfig[channel: 2] == document[channel: 2])
     }
 
+    /// A channel started from its name has no frequency yet: it's flagged, and not written.
+    @Test func nameOnlyChannelIsWarnedAboutAndNotWritten() {
+        var document = ScannerConfig()
+        document[channel: 5].name = "Pending"
+        #expect(document[channel: 5].isEmpty)
+        #expect(document.validate().contains { $0.location == .channel(5) && $0.severity == .warning && $0.message.contains("no frequency") })
+        #expect(WritePlan(from: ScannerConfig(), to: document).isEmpty)
+    }
+
     @Test func rangesOnlyPlanKeepsInRangeFrequencies() {
         #expect(BandPlan.rangesOnly.storedValue(for: Frequency(parsing: "154.0062")!) == Frequency(parsing: "154.0062"))
         #expect(BandPlan.rangesOnly.storedValue(for: Frequency(parsing: "60")!) == nil)

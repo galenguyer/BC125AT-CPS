@@ -30,11 +30,12 @@ struct DocumentView: View {
     @State private var importSummary: (title: String, message: String)?
     /// Identifies this window for drag and drop.
     @State private var window = UUID()
+    @AppStorage(AppSettingsView.duplicateWarningsKey) private var duplicateWarnings = true
 
     private var config: ScannerConfig { document.config }
 
     var body: some View {
-        let issues = config.validate()
+        let issues = config.validate(duplicateFrequencies: duplicateWarnings)
         NavigationSplitView {
             Sidebar(config: $document.config, issues: issues, selection: $selection, window: window)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210)
@@ -195,6 +196,10 @@ struct DocumentView: View {
             guard report.succeeded, !plan.adjustments.isEmpty || !report.storedDifferently.isEmpty else { return }
             var updated = report.acceptedConfig
             updated.metadata = document.config.metadata
+            // Channels with only a name aren't written; keep them so the name isn't lost.
+            for number in 1...ScannerConfig.channelCount where document.config[channel: number].isEmpty {
+                updated[channel: number] = document.config[channel: number]
+            }
             document.config = updated
         }
     }

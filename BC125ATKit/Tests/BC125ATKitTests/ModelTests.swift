@@ -181,3 +181,37 @@ import Testing
         #expect(issues.contains { $0.location == .globalLockouts && $0.message.contains("101") })
     }
 }
+
+@Suite struct DuplicateFrequencyTests {
+    @Test func warnsOnEveryCopyNamingTheOthers() {
+        var config = ScannerConfig()
+        config[channel: 1] = Channel(name: "GUARD", frequency: Frequency(parsing: "121.5"), modulation: .am)
+        config[channel: 51] = Channel(name: "GUARD", frequency: Frequency(parsing: "121.5"), modulation: .am)
+        config[channel: 101] = Channel(frequency: Frequency(parsing: "121.5"), modulation: .am)
+        config[channel: 2] = Channel(name: "Other", frequency: Frequency(parsing: "118.3"), modulation: .am)
+        let issues = config.validate()
+        func messages(_ number: Int) -> [String] { issues.filter { $0.location == .channel(number) }.map(\.message) }
+        #expect(messages(1) == ["121.5000 MHz is also on channel 51 “GUARD” and channel 101"])
+        #expect(messages(51) == ["121.5000 MHz is also on channel 1 “GUARD” and channel 101"])
+        #expect(messages(101) == ["121.5000 MHz is also on channel 1 “GUARD” and channel 51 “GUARD”"])
+        #expect(messages(2).isEmpty)
+        // Only warnings: writing is still allowed.
+        #expect(!issues.contains { $0.severity == .error })
+        // And they can be turned off.
+        #expect(!config.validate(duplicateFrequencies: false).contains { $0.message.contains("is also on") })
+    }
+
+    @Test func comparesAsStoredOnTheScanner() {
+        var config = ScannerConfig()
+        config[channel: 1] = Channel(frequency: Frequency(parsing: "154.0062"))
+        config[channel: 2] = Channel(frequency: Frequency(parsing: "154.0025"))
+        #expect(config.validate().contains { $0.location == .channel(1) && $0.message == "154.0025 MHz is also on channel 2" })
+    }
+
+    @Test func listsAtMostFourOthers() {
+        var config = ScannerConfig()
+        for number in 1...7 { config[channel: number] = Channel(frequency: Frequency(parsing: "162.55")) }
+        #expect(config.validate().contains { $0.location == .channel(1)
+            && $0.message == "162.5500 MHz is also on channel 2, channel 3, channel 4, channel 5 and 2 more" })
+    }
+}

@@ -97,12 +97,13 @@ extension ScannerConfig {
     }
 
     /// Sets a channel's frequency. Giving an empty channel a frequency makes it a new, active
-    /// channel (empty channels are locked out on the scanner); clearing it empties the channel.
+    /// channel (empty channels are locked out on the scanner), keeping any name already typed;
+    /// clearing it empties the channel.
     mutating func setFrequency(_ frequency: Frequency?, ofChannel number: Int) {
         if frequency == nil {
             self[channel: number] = .empty
         } else if self[channel: number].isEmpty {
-            self[channel: number] = Channel(frequency: frequency)
+            self[channel: number] = Channel(name: self[channel: number].name, frequency: frequency)
         } else {
             self[channel: number].frequency = frequency
         }
