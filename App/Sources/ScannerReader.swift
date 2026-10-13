@@ -20,18 +20,19 @@ final class ScannerReader {
     }
 
     /// Reads the whole configuration, then calls `apply` with it on success.
-    func read(from device: USBScannerDevice, apply: @escaping @MainActor (ScannerConfig) -> Void) {
+    /// `live` is paused for the read, since only one connection can have the scanner open.
+    func read(from device: USBScannerDevice, live: LiveMonitor, apply: @escaping @MainActor (ScannerConfig) -> Void) {
         guard !isReading else { return }
         state = .reading(ReadProgress(completed: 0, total: 1))
         task = Task {
             do {
-                let session = try ScannerSession.open(locationID: device.locationID)
-                defer { Task { await session.close() } }
-                let config = try await session.readConfiguration { progress in
-                    // Every 10th step is plenty for a progress bar and keeps main-actor hops down.
-                    guard progress.completed % 10 == 0 || progress.completed == progress.total else { return }
-                    Task { @MainActor in
-                        if self.isReading { self.state = .reading(progress) }
+                let config = try await live.withScanner("Paused while reading from the scanner", device: device) { session in
+                    try await session.readConfiguration { progress in
+                        // Every 10th step is plenty for a progress bar and keeps main-actor hops down.
+                        guard progress.completed % 10 == 0 || progress.completed == progress.total else { return }
+                        Task { @MainActor in
+                            if self.isReading { self.state = .reading(progress) }
+                        }
                     }
                 }
                 apply(config)

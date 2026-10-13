@@ -20,7 +20,12 @@ struct ChannelTableView: View {
     var body: some View {
         let rows = makeRows()
         ChannelTable(config: $config, rows: rows, selection: $selection, sort: $sort,
-                     window: window, pasteStart: numbers.first ?? 1)
+                     window: window, pasteStart: numbers.first ?? 1, scope: numbers.first ?? 0)
+            // Switching to another bank starts fresh, as a new table would.
+            .onChange(of: numbers) {
+                selection = []
+                searchText = ""
+            }
             .overlay {
                 if rows.isEmpty {
                     if searchText.isEmpty {

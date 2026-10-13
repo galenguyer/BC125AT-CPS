@@ -34,6 +34,11 @@ public final class MockScanner: LineTransport, Sendable {
         get { engine.withLock { $0.unresponsiveCommands } }
         set { engine.withLock { $0.unresponsiveCommands = newValue } }
     }
+    /// The raw `GLG` reply fields (after the command name), as a scanning scanner would report.
+    public var glgFields: [String] {
+        get { engine.withLock { $0.glgFields } }
+        set { engine.withLock { $0.glgFields = newValue } }
+    }
     public var inProgramMode: Bool { engine.withLock { $0.inProgramMode } }
     /// Every line received, in order.
     public var received: [String] { engine.withLock { $0.received } }
@@ -71,6 +76,7 @@ private struct Engine {
     var unresponsiveCommands: Set<String> = []
     var replies: [String] = []
     var lockoutCursor = 0
+    var glgFields = Array(repeating: "", count: 12)
 
     init(config: ScannerConfig, bandPlan: BandPlan) {
         self.config = config
@@ -165,6 +171,8 @@ private struct Engine {
             // Measured: out-of-range values are acknowledged but ignored.
             if SystemSettings.contrastRange.contains(value) { config.settings.contrast = value }
             return ok()
+        case "GLG":
+            return (["GLG"] + glgFields).joined(separator: ",")
         case "VOL", "SQL":
             let current = command == "VOL" ? config.settings.volume : config.settings.squelch
             if isGet { return "\(command),\(current)" }

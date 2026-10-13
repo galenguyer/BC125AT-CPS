@@ -86,6 +86,35 @@ public actor ScannerSession {
         )
     }
 
+    // MARK: Live (outside program mode, while the scanner keeps scanning)
+
+    /// `GLG`: what the scanner is tuned to right now (SPEC.md §3.7).
+    public func liveStatus() throws -> LiveStatus {
+        LiveStatus(glg: try connection.execute("GLG"))
+    }
+
+    /// `VOL` and `SQL`, read together.
+    public func levels() throws -> (volume: Int, squelch: Int) {
+        func level(_ command: String) throws -> Int {
+            let fields = try connection.execute(command)
+            guard let value = fields.first.flatMap({ Wire.int($0, in: SystemSettings.levelRange) }) else {
+                throw Wire.FormatError(command: command, fields: fields)
+            }
+            return value
+        }
+        return (try level("VOL"), try level("SQL"))
+    }
+
+    /// Sets the volume (0–15) immediately, as the scanner's own control would.
+    public func setVolume(_ level: Int) throws {
+        _ = try connection.execute("VOL,\(min(max(level, 0), 15))")
+    }
+
+    /// Sets the squelch (0 = open – 15) immediately.
+    public func setSquelch(_ level: Int) throws {
+        _ = try connection.execute("SQL,\(min(max(level, 0), 15))")
+    }
+
     /// Sends `EPG` to recover a scanner left in program mode (SPEC.md §7).
     public func releaseProgramMode() throws {
         try connection.exitProgramMode()

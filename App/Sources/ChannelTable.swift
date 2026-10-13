@@ -21,6 +21,9 @@ struct ChannelTable: NSViewRepresentable {
     var window: UUID
     /// Where a paste goes when nothing is selected.
     var pasteStart: Int
+    /// Identifies which channels are shown (All Channels or a bank); when it changes, the table
+    /// scrolls back to the top.
+    var scope: Int
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -165,9 +168,18 @@ final class ChannelNSTableView: NSTableView {
         }
     }
 
+    /// Delete clears the selection, Return starts editing it, and typing digits jumps to that
+    /// channel number.
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
+        let characters = event.charactersIgnoringModifiers ?? ""
         if event.specialKey == .delete || event.specialKey == .deleteForward, !selectedRowIndexes.isEmpty {
             coordinator?.clearSelection()
+        } else if modifiers.isEmpty, event.specialKey == .carriageReturn || event.specialKey == .enter,
+                  coordinator?.editSelectedRow() == true {
+            return
+        } else if modifiers.isEmpty, characters.count == 1, characters.allSatisfy({ ("0"..."9").contains($0) }) {
+            coordinator?.typeChannelDigit(characters)
         } else {
             super.keyDown(with: event)
         }
@@ -248,6 +260,12 @@ extension ChannelTable {
         private var updating = false
         /// The channels the context menu acts on.
         private var menuNumbers: [Int] = []
+        /// Digits typed so far to jump to a channel, and when the last one was typed.
+        private var typedNumber = ""
+        private var typedAt = Date.distantPast
+        /// The cell a Tab or Shift-Tab moved to, in case the commit reloads the rows.
+        private var tabMove: (number: Int, column: ChannelColumn, at: Date)?
+        private var scope: Int?
 
         init(_ parent: ChannelTable) {
             self.parent = parent
@@ -266,7 +284,29 @@ extension ChannelTable {
             let old = rows
             rows = parent.rows
             if old.map(\.number) != rows.map(\.number) {
-                table.reloadData()
+                // Not reloadData: that throws every cell away and builds new ones, which made
+                // switching banks visibly slow. Fix the row count, then refresh the cells that
+                // exist in place; rows scrolled to later are configured as they appear.
+                if let editor = table.window?.firstResponder as? NSText, editor.isDescendant(of: table) {
+                    table.window?.makeFirstResponder(table) // commit before the cell changes channel
+                }
+                table.beginUpdates()
+                if rows.count < old.count { table.removeRows(at: IndexSet(rows.count..<old.count), withAnimation: []) }
+                if rows.count > old.count { table.insertRows(at: IndexSet(old.count..<rows.count), withAnimation: []) }
+                table.endUpdates()
+                table.enumerateAvailableRowViews { rowView, row in
+                    guard row < rows.count else { return }
+                    for (index, column) in table.tableColumns.enumerated() {
+                        guard let cell = rowView.view(atColumn: index) as? ChannelCell,
+                              let kind = ChannelColumn(rawValue: column.identifier.rawValue) else { continue }
+                        configure(cell, kind, rows[row])
+                    }
+                }
+                // A Tab move that committed an edit can re-sort or reload the rows, which ends
+                // editing in the cell it moved to, so start it again.
+                if let move = tabMove, Date.now.timeIntervalSince(move.at) < 0.5 {
+                    DispatchQueue.main.async { self.beginEditing(move.number, move.column) }
+                }
             } else {
                 // Same rows in the same order: refresh the visible cells of changed rows in place.
                 for index in rows.indices where rows[index] != old[index] {
@@ -283,6 +323,11 @@ extension ChannelTable {
 
             let selected = IndexSet(rows.indices.filter { parent.selection.contains(rows[$0].number) })
             if table.selectedRowIndexes != selected { table.selectRowIndexes(selected, byExtendingSelection: false) }
+
+            if scope != parent.scope {
+                if scope != nil, !rows.isEmpty { table.scrollRowToVisible(0) }
+                scope = parent.scope
+            }
         }
 
         // MARK: Data source and delegate
@@ -329,14 +374,20 @@ extension ChannelTable {
                 cell.imageView = image
                 control = image
             case .number:
-                let label = NSTextField(labelWithString: "")
+                let label = NSTextField()
+                label.isEditable = false
+                label.isSelectable = false
+                label.isBordered = false
+                label.drawsBackground = false
                 label.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
                 label.textColor = .secondaryLabelColor
                 cell.textField = label
                 cell.fillsWidth = true
                 control = label
             case .name, .frequency:
-                let field = NSTextField(string: "")
+                // Plain initializers: the convenience ones size the control to fit, which made
+                // creating a screenful of cells slow.
+                let field = NSTextField()
                 field.isBordered = false
                 field.drawsBackground = false
                 field.isEditable = true
@@ -361,7 +412,11 @@ extension ChannelTable {
                 popUp.menu?.delegate = cell
                 control = popUp
             case .lockout, .priority:
-                let box = NSButton(checkboxWithTitle: "", target: self, action: kind == .lockout ? #selector(lockoutClicked(_:)) : #selector(priorityClicked(_:)))
+                let box = NSButton()
+                box.setButtonType(.switch)
+                box.title = ""
+                box.target = self
+                box.action = kind == .lockout ? #selector(lockoutClicked(_:)) : #selector(priorityClicked(_:))
                 box.toolTip = kind == .lockout ? "Skip this channel when scanning" : "Priority channel (one per bank)"
                 control = box
             }
@@ -489,14 +544,72 @@ extension ChannelTable {
             }
         }
 
-        /// Escape puts the field back as it was.
+        /// Escape puts the field back as it was. Tab and Shift-Tab commit and move to the next or
+        /// previous editable cell: Name, then Frequency, then the next row's Name.
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            guard selector == #selector(NSResponder.cancelOperation(_:)), let cell = control.superview as? ChannelCell,
+            guard let cell = control.superview as? ChannelCell,
                   let kind = cell.identifier.flatMap({ ChannelColumn(rawValue: $0.rawValue) }) else { return false }
-            let channel = config[channel: cell.number]
-            textView.string = kind == .name ? channel.name : channel.frequency?.megahertzString ?? ""
-            control.window?.makeFirstResponder(table)
+            switch selector {
+            case #selector(NSResponder.cancelOperation(_:)):
+                let channel = config[channel: cell.number]
+                textView.string = kind == .name ? channel.name : channel.frequency?.megahertzString ?? ""
+                control.window?.makeFirstResponder(table)
+                return true
+            case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
+                let target = neighbour(of: cell.number, kind, forward: selector == #selector(NSResponder.insertTab(_:)))
+                control.window?.makeFirstResponder(table) // commits the edit
+                if let target {
+                    tabMove = (target.number, target.column, .now)
+                    DispatchQueue.main.async { self.beginEditing(target.number, target.column) }
+                }
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// The editable cell after (or before) `column` of channel `number`, in display order.
+        /// An empty channel's name can't be edited, so its row only offers the frequency.
+        private func neighbour(of number: Int, _ column: ChannelColumn, forward: Bool) -> (number: Int, column: ChannelColumn)? {
+            guard let index = rows.firstIndex(where: { $0.number == number }) else { return nil }
+            func cells(_ row: ChannelRow) -> [ChannelColumn] { row.channel.isEmpty ? [.frequency] : [.name, .frequency] }
+            var order: [(Int, ChannelColumn)] = []
+            for row in rows { order += cells(row).map { (row.number, $0) } }
+            // The current cell may not be in the list (a name just cleared by emptying the row).
+            let position = order.firstIndex { $0.0 == number && $0.1 == column }
+                ?? order.firstIndex { $0.0 == number } ?? index
+            let next = forward ? position + 1 : position - 1
+            return order.indices.contains(next) ? order[next] : nil
+        }
+
+        /// Selects channel `number`'s row and starts editing `column` in it.
+        func beginEditing(_ number: Int, _ column: ChannelColumn) {
+            guard let table, let row = rows.firstIndex(where: { $0.number == number }),
+                  let columnIndex = table.tableColumns.firstIndex(where: { $0.identifier == column.identifier }) else { return }
+            if table.selectedRowIndexes != [row] { table.selectRowIndexes([row], byExtendingSelection: false) }
+            table.scrollRowToVisible(row)
+            table.editColumn(columnIndex, row: row, with: nil, select: true)
+        }
+
+        /// Return: edit the selected row's name, or its frequency if the channel is empty.
+        func editSelectedRow() -> Bool {
+            guard let table, table.selectedRowIndexes.count == 1, let row = table.selectedRowIndexes.first, row < rows.count else { return false }
+            beginEditing(rows[row].number, rows[row].channel.isEmpty ? .frequency : .name)
             return true
+        }
+
+        /// Typing a channel number selects it: "4", "5", "8" in quick succession goes to 458.
+        func typeChannelDigit(_ digit: String) {
+            guard let table else { return }
+            if Date.now.timeIntervalSince(typedAt) > 1 { typedNumber = "" }
+            typedAt = .now
+            typedNumber += digit
+            guard let number = Int(typedNumber), let row = rows.firstIndex(where: { $0.number == number }) else {
+                if typedNumber.count >= 3 { NSSound.beep() }
+                return
+            }
+            table.selectRowIndexes([row], byExtendingSelection: false)
+            table.scrollRowToVisible(row)
         }
 
         // MARK: Context menu

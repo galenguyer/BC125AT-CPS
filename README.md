@@ -12,6 +12,9 @@ scanner, edit its 500 channels and settings, and write the changes back.
   priority channel per bank, and 100 global lockouts. It also knows the scanner's channel step plan,
   so it tells you when a frequency will be stored differently (for example, 154.0062 MHz is stored
   as 154.0025).
+- **Live bar** along the bottom of the window: what the scanner is receiving right now, the last
+  transmission heard, and volume and squelch sliders that change the scanner as you drag.
+- **Compare with Scanner** (⇧⌘D) lists how the scanner differs from your document without writing.
 - Saves configurations as `.bc125at` files, and imports and exports CSV (including bc125py's CSV).
 - Opens and saves files from Uniden's own BC125AT software (`.bc125at_ss`, **File ▸ Import Uniden File…**
   and **Export as Uniden File…**), so you can move between the two.

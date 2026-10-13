@@ -39,7 +39,10 @@ struct DocumentView: View {
             Sidebar(config: $document.config, issues: issues, selection: $selection, window: window)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } detail: {
-            detail(issues: issues)
+            VStack(spacing: 0) {
+                detail(issues: issues)
+                LiveBar(live: monitor.live)
+            }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -60,7 +63,8 @@ struct DocumentView: View {
         .focusedSceneValue(\.documentActions, DocumentActions(
             read: requestRead, write: requestWrite, canUseScanner: canUseScanner,
             importCSV: { startImport(.csv) }, exportCSV: { startExport(.csv(config)) },
-            importUniden: { startImport(.uniden) }, exportUniden: { startExport(.uniden(config)) }
+            importUniden: { startImport(.uniden) }, exportUniden: { startExport(.uniden(config)) },
+            compare: requestCompare
         ))
         .confirmationDialog("Replace this document with the scanner's contents?", isPresented: $confirmingReplace) {
             Button("Read and Replace", action: startRead)
@@ -100,11 +104,10 @@ struct DocumentView: View {
     @ViewBuilder
     private func detail(issues: [ValidationIssue]) -> some View {
         switch selection {
-        case .allChannels, nil:
-            ChannelTableView(config: $document.config, numbers: Array(1...ScannerConfig.channelCount), issues: issues, title: "All Channels", window: window)
-        case .bank(let bank):
-            ChannelTableView(config: $document.config, numbers: Array(Channel.channels(inBank: bank)), issues: issues, title: bankTitle(bank), window: window)
-                .id(bank)
+        case .allChannels, .bank, nil:
+            // One table for All Channels and every bank, so switching only reloads its rows
+            // instead of building a new table with all its controls.
+            ChannelTableView(config: $document.config, numbers: channelNumbers, issues: issues, title: channelTitle, window: window)
         case .search:
             SearchView(config: $document.config, issues: issues)
         case .globalLockouts:
@@ -112,6 +115,14 @@ struct DocumentView: View {
         case .settings:
             SettingsView(config: $document.config, issues: issues)
         }
+    }
+
+    private var channelNumbers: [Int] {
+        if case .bank(let bank) = selection { Array(Channel.channels(inBank: bank)) } else { Array(1...ScannerConfig.channelCount) }
+    }
+
+    private var channelTitle: String {
+        if case .bank(let bank) = selection { bankTitle(bank) } else { "All Channels" }
     }
 
     private func bankTitle(_ bank: Int) -> String {
@@ -140,7 +151,7 @@ struct DocumentView: View {
 
     private func startRead() {
         guard let device = monitor.selectedDevice else { return }
-        reader.read(from: device) { config in
+        reader.read(from: device, live: monitor.live) { config in
             replaceConfig(with: config)
         }
     }
@@ -166,12 +177,19 @@ struct DocumentView: View {
             blockingErrors = errors
             return
         }
-        writer.prepare(document: config, device: device)
+        writer.prepare(document: config, device: device, live: monitor.live)
+    }
+
+    /// Like Write to Scanner, but only lists the differences. Works even if the document has
+    /// errors, since nothing is written.
+    private func requestCompare() {
+        guard canUseScanner, let device = monitor.selectedDevice else { return }
+        writer.prepare(document: config, device: device, live: monitor.live, compareOnly: true)
     }
 
     private func startWrite() {
         guard let device = monitor.selectedDevice else { return }
-        writer.write(device: device) { report, plan in
+        writer.write(device: device, live: monitor.live) { report, plan in
             // When everything verified, update the document to exactly what the scanner stored
             // (snapped frequencies, trimmed names). On failure, keep the document as the user left it.
             guard report.succeeded, !plan.adjustments.isEmpty || !report.storedDifferently.isEmpty else { return }

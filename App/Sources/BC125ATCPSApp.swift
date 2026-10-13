@@ -57,6 +57,7 @@ struct DocumentActions {
     var exportCSV: @MainActor () -> Void
     var importUniden: @MainActor () -> Void
     var exportUniden: @MainActor () -> Void
+    var compare: @MainActor () -> Void
 }
 
 extension FocusedValues {
@@ -88,6 +89,10 @@ struct ScannerCommands: Commands {
             Button("Write to Scanner…") { actions?.write() }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
                 .disabled(actions?.canUseScanner != true)
+            Button("Compare with Scanner…") { actions?.compare() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(actions?.canUseScanner != true)
+                .help("Read the scanner and list how it differs from this document, without writing anything")
             Divider()
             Button("Show Backups in Finder") { BackupStore.reveal() }
             Button("Release Scanner") { release() }
@@ -101,9 +106,9 @@ struct ScannerCommands: Commands {
         guard let device = monitor.selectedDevice else { return }
         Task {
             do {
-                let session = try ScannerSession.open(locationID: device.locationID)
-                try await session.releaseProgramMode()
-                await session.close()
+                try await monitor.live.withScanner("Paused while releasing the scanner", device: device) { session in
+                    try await session.releaseProgramMode()
+                }
             } catch {
                 NSAlert(error: error).runModal()
             }

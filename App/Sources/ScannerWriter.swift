@@ -12,6 +12,8 @@ final class ScannerWriter {
         case checking(ReadProgress)
         case upToDate
         case review(WritePlan, scanner: ScannerConfig)
+        /// Compare with Scanner: the differences, with nothing to write.
+        case compared(WritePlan)
         case writing(ReadProgress, WritePlan)
         case finished(WriteReport, WritePlan, backup: URL?)
         case failed(String)
@@ -27,20 +29,21 @@ final class ScannerWriter {
         }
     }
 
-    /// Reads the scanner and works out what writing `document` would change.
-    func prepare(document: ScannerConfig, device: USBScannerDevice) {
+    /// Reads the scanner and works out what writing `document` would change. With `compareOnly`,
+    /// the result is shown without the option to write. `live` is paused while reading.
+    func prepare(document: ScannerConfig, device: USBScannerDevice, live: LiveMonitor, compareOnly: Bool = false) {
         guard !isBusy else { return }
         state = .checking(ReadProgress(completed: 0, total: 1))
         task = Task {
             do {
-                let session = try ScannerSession.open(locationID: device.locationID)
-                defer { Task { await session.close() } }
-                let scanner = try await session.readConfiguration { progress in
-                    guard progress.completed % 10 == 0 else { return }
-                    Task { @MainActor in if case .checking = self.state { self.state = .checking(progress) } }
+                let scanner = try await live.withScanner("Paused while checking the scanner", device: device) { session in
+                    try await session.readConfiguration { progress in
+                        guard progress.completed % 10 == 0 else { return }
+                        Task { @MainActor in if case .checking = self.state { self.state = .checking(progress) } }
+                    }
                 }
                 let plan = WritePlan(from: scanner, to: document)
-                state = plan.isEmpty ? .upToDate : .review(plan, scanner: scanner)
+                state = plan.isEmpty ? .upToDate : compareOnly ? .compared(plan) : .review(plan, scanner: scanner)
             } catch is CancellationError {
                 state = .idle
             } catch {
@@ -52,7 +55,7 @@ final class ScannerWriter {
     /// Writes the plan being reviewed. Backs up the scanner's current contents first; if the
     /// backup can't be saved, nothing is written. `apply` gets the result so the document can be
     /// updated to what the scanner actually stored.
-    func write(device: USBScannerDevice, apply: @escaping @MainActor (WriteReport, WritePlan) -> Void) {
+    func write(device: USBScannerDevice, live: LiveMonitor, apply: @escaping @MainActor (WriteReport, WritePlan) -> Void) {
         guard case .review(let plan, let scanner) = state else { return }
         let backup: URL
         do {
@@ -64,11 +67,11 @@ final class ScannerWriter {
         state = .writing(ReadProgress(completed: 0, total: 1), plan)
         task = Task {
             do {
-                let session = try ScannerSession.open(locationID: device.locationID)
-                defer { Task { await session.close() } }
-                let report = try await session.write(plan) { progress in
-                    guard progress.completed % 5 == 0 else { return }
-                    Task { @MainActor in if case .writing(_, let plan) = self.state { self.state = .writing(progress, plan) } }
+                let report = try await live.withScanner("Paused while writing to the scanner", device: device) { session in
+                    try await session.write(plan) { progress in
+                        guard progress.completed % 5 == 0 else { return }
+                        Task { @MainActor in if case .writing(_, let plan) = self.state { self.state = .writing(progress, plan) } }
+                    }
                 }
                 apply(report, plan)
                 state = .finished(report, plan, backup: backup)

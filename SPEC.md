@@ -1,6 +1,6 @@
 # BC125AT CPS — Native macOS Programming Software
 
-**Status:** v0.9 (milestones 0–6 complete) · 2026-10-12  
+**Status:** v1.0 of this spec, app 0.2 (milestones 0–7 complete) · 2026-10-12  
 **License:** MIT  
 **Platform:** macOS 15+  
 **Bundle ID:** `net.k9fgt.bc125at`
@@ -22,7 +22,7 @@ A native SwiftUI app for macOS that reads, edits, and writes the configuration o
 - Firmware updates.
 - RadioReference database lookup (a candidate for v2).
 - iOS or iPadOS. USB device access there needs DriverKit or MFi, which is out of scope for now.
-- Live remote control or audio. The BC125AT has no status or remote-key commands; a volume/squelch panel is a stretch goal (§8.6).
+- Remote key presses or audio. (What the scanner is receiving, and its volume and squelch, *are* shown live; §3.7, §8.6.)
 
 ## 2. Hardware & Connection
 
@@ -49,7 +49,7 @@ The transport is `USBTransport` in `BC125ATKit`; the USB calls are in a small C 
 >
 > **Source:** Uniden's *BC125AT Operation Specification*, Appendix C "PC programming Command" (pp. 54–63; a copy is in the bc125py repo at `docs/BC125AT_Protocol.pdf`), cross-checked against bc125py (MIT, commit `b9454ca`, 2026-01-03). Wherever the hardware disagreed with Uniden's document, the hardware wins, and the row says so.
 
-Commands marked **P** only work in program mode. Uniden's official list has exactly 24 commands, all in the table below. There is **no** `STS`, `GLG`, `KEY`, or `PWR` on the BC125AT.
+Commands marked **P** only work in program mode. Uniden's official list has exactly 24 commands, all in the table below. **`GLG` isn't on that list but works** (§3.7). `STS`, `KEY` and `PWR` haven't been tried.
 
 | Cmd | Mode | Get → response | Set | Notes |
 |---|---|---|---|---|
@@ -184,6 +184,24 @@ From bc125py's defaults. **These match the tested scanner's `CSP` readout exactl
 | 4 | 50.0000–54.0000 | 9 | 400.0000–449.9937 |
 | 5 | 108.0000–136.9916 | 10 | 450.0000–469.9937 |
 
+### 3.7 Live status (`GLG`)
+Not in Uniden's BC125AT list, but tested on firmware 1.06.06: outside program mode, `GLG` answers with the layout Uniden's other scanners use, and the scanner keeps scanning while it's polled.
+
+`GLG,[FRQ],[MOD],[ATT],[CTCSS/DCS],[NAME1],[NAME2],[NAME3],[SQL],[MUT],[SYS_TAG],[CHAN_TAG],[NAC]`
+
+| Field | On the BC125AT |
+|---|---|
+| FRQ | Frequency, 100 Hz units (`04625625`) |
+| MOD | `AM`, `FM`, `NFM` |
+| CTCSS/DCS | Tone code (§3.2), `0` for none |
+| NAME3 | The channel name; NAME1 and NAME2 are empty |
+| SQL | `1` while a signal holds squelch open |
+| MUT | `1` while muted (squelch closed); `0` while receiving |
+| CHAN_TAG | The channel number (`312`) |
+| ATT, SYS_TAG, NAC | Empty |
+
+Examples: `GLG,04625625,NFM,,82,,,TALKAROUND,1,0,,312,` while receiving; `GLG,01215000,AM,,0,,,GUARD,0,1,,1,` in Scan Hold. While scanning, the reply changes several times a second, and the fields can momentarily disagree (one channel's frequency with the next one's name), so a channel is only shown once the scanner stays on it. `VOL` and `SQL` also work outside program mode and take effect immediately.
+
 ## 4. Data Model
 
 These are plain `Codable`, `Sendable`, `Equatable` value types in a UI-free package:
@@ -292,9 +310,10 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
    6. A channel that reads back identical except for its frequency was snapped by the scanner to a value the app didn't predict (always possible on the unmeasured Canada plan, §3.5). That isn't a failure: the result lists "154.0062 MHz was stored as 154.0025 MHz" and the document takes the stored value (`WriteReport.storedDifferently`, `acceptedConfig`).
    - Under the hood: one command per difference; priority channels are written last, because setting one clears the bank's others; lockout removals go before additions. Rejected commands (`ERR`/`NG`) are recorded and the rest still written; a timeout or cancel stops the write. Verification reads the whole scanner back and plans again, so anything still in that plan is a mismatch.
 3. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
-4. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
-5. **After writing**, the scanner sits in Scan Hold (`EPG` doesn't resume scanning). The completion message tells the user to press Scan.
-6. **Automatic backup**: every write first saves the scanner's previous state to `Application Support/BC125AT CPS/Backups/Scanner backup <date> at <time>.bc125at`, inside the app's sandbox container. If the backup can't be saved, nothing is written. The newest 50 are kept. Scanner ▸ Show Backups in Finder opens the folder.
+4. **Compare with Scanner** (⇧⌘D): reads the scanner and lists how it differs from the document, as the write review would, without writing. Works even when the document has errors.
+5. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
+6. **After writing**, the scanner sits in Scan Hold (`EPG` doesn't resume scanning). The completion message tells the user to press Scan.
+7. **Automatic backup**: every write first saves the scanner's previous state to `Application Support/BC125AT CPS/Backups/Scanner backup <date> at <time>.bc125at`, inside the app's sandbox container. If the backup can't be saved, nothing is written. The newest 50 are kept. Scanner ▸ Show Backups in Finder opens the folder.
 
 ## 8. User Interface
 
@@ -313,6 +332,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Copy, cut and paste use TSV on the pasteboard (`ChannelClipboard`), so they work with Numbers and Excel. Pasting starts at the first selected channel and fills consecutive slots, stopping at 500. Pasted text may have a header row (columns matched by name, as for CSV), or be in Name, Frequency, Modulation, Tone, Delay, Lockout, Priority order, or be a single column of frequencies.
 - Rows can be dragged (one or several) onto another row, which moves them to consecutive slots starting there. Channels already in those slots aren't lost; they move into the slots that were vacated (`ScannerConfig.moveChannels`). Dropping onto a bank in the sidebar moves them into that bank's first empty slots, or beeps if there isn't room. Dragging into a *different* document's window copies the channels instead, since channel numbers mean nothing there. Each drop is one undo step.
 - Cmd-F filters by name or frequency.
+- Keyboard: Return edits the selected row (its name, or the frequency of an empty channel). While editing, Tab and Shift-Tab commit and move Name → Frequency → the next row's Name, and back; Escape cancels. Typing a channel number ("4", "5", "8" in quick succession) jumps to it.
 - Every edit can be undone through the document's `UndoManager`.
 
 ### 8.3 Search & Close Call
@@ -324,8 +344,14 @@ An editable list of frequencies with add and remove. The maximum count is unknow
 ### 8.5 Settings
 Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. The band plan, read-only (§3.5), with a note that it's changed in Uniden's software. Bank names are stored in the document only and are clearly labeled that way.
 
-### 8.6 Stretch: Live panel
-When connected but not in program mode, show volume and squelch sliders (`VOL`/`SQL` work outside program mode). The BC125AT has no status command (no `GLG`/`STS`), so there's no display of what it's receiving.
+### 8.6 Live bar
+A strip along the bottom of every document window (`LiveBar`, `LiveMonitor`):
+- **Now:** while a signal is open, or once the scanner has stayed on a channel for 0.6 s (hold, or the delay after a transmission), the channel number, name, frequency, modulation and tone, with a green dot while receiving. Otherwise "Scanning…".
+- **Last:** the most recent transmission and how long ago, so a short one isn't missed.
+- **Volume and squelch sliders** that change the scanner immediately, and pick up changes made on the scanner itself.
+- A pause button that stops polling (and frees the scanner for other programs, such as `bc125at-cli`).
+
+`LiveMonitor` is shared by all windows. It polls `GLG` every 200 ms and `VOL`/`SQL` every 2 s, and sends slider changes between polls. USB access is exclusive, so reading, writing, comparing and Release Scanner go through `LiveMonitor.withScanner`, which pauses polling, opens the scanner, and closes it before polling resumes.
 
 ### 8.7 Platform polish
 Light and dark mode, menu commands with keyboard shortcuts, and a Settings window (⌘,) for backup retention. App icon in `App/Sources/Assets.xcassets`, drawn by `scripts/make-icon.swift`.
@@ -349,6 +375,7 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 4. ✅ **Write**: diff review, writing only changes, read-back checks, and backups. Verified against a real BC125AT: from the CLI (5 changes, then restoring the original) and from the app (pasting channels, an off-plan frequency that was adjusted, clearing channels, and the up-to-date case). Each test ended with a dump identical to the backup.
 5. ✅ **Polish**: drag reordering (within a table, onto a sidebar bank, and between documents), inspector, VoiceOver labelling, app icon, Settings window, release script, README and NOTICE.
 6. ✅ **Uniden files**: import and export `.bc125at_ss` (§5.1), checked against a real scanner with three files from Uniden's software. Also: the AppKit channel table, title-bar double-click zoom, and a blank document at launch instead of the Open panel.
+7. ✅ **Live and keyboard** (app 0.2): the live bar (§8.6) on `GLG`, which turned out to work (§3.7); Compare with Scanner; Return, Tab and type-a-number in the channel table.
 
 ## 11. Decisions
 | Topic | Decision |

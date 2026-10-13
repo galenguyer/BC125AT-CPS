@@ -18,10 +18,16 @@ struct WriteSheet: View {
                 buttons { Button("Cancel", role: .cancel) { writer.cancel() }.keyboardShortcut(.cancelAction) }
             case .upToDate:
                 Label("The Scanner Is Up to Date", systemImage: "checkmark.circle.fill").font(.headline).foregroundStyle(.green)
-                Text("Everything in this document is already on the scanner. Nothing was written.")
+                Text("The scanner already holds everything in this document.")
                 buttons { Button("OK") { writer.dismiss() }.keyboardShortcut(.defaultAction) }
             case .review(let plan, _):
                 review(plan)
+            case .compared(let plan):
+                Text("The Scanner Differs in \(plan.steps.count) \(plan.steps.count == 1 ? "Place" : "Places")").font(.headline)
+                changeList(plan)
+                Text("Each line shows the scanner's value → this document's. Nothing was written; use Write to Scanner to make the scanner match.")
+                    .font(.callout).foregroundStyle(.secondary)
+                buttons { Button("Done") { writer.dismiss() }.keyboardShortcut(.defaultAction) }
             case .writing(let progress, let plan):
                 Text("Writing \(plan.steps.count) \(plan.steps.count == 1 ? "Change" : "Changes")").font(.headline)
                 ProgressView(value: progress.fraction)
@@ -50,6 +56,22 @@ struct WriteSheet: View {
     @ViewBuilder
     private func review(_ plan: WritePlan) -> some View {
         Text("Write \(plan.steps.count) \(plan.steps.count == 1 ? "Change" : "Changes") to the Scanner?").font(.headline)
+        changeList(plan)
+        if plan.target.metadata.bandPlanRegion == .canada {
+            Text("The scanner is set to the Canada band plan, so frequencies are written as entered. Any the scanner stores differently are listed afterwards.")
+                .font(.callout).foregroundStyle(.orange)
+        }
+        Text("The scanner's current contents are backed up first, so you can go back to them.")
+            .font(.callout).foregroundStyle(.secondary)
+        buttons {
+            Button("Cancel", role: .cancel) { writer.cancel() }.keyboardShortcut(.cancelAction)
+            Button("Write \(plan.steps.count) \(plan.steps.count == 1 ? "Change" : "Changes")", action: write)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    /// The differences by section, plus anything the scanner will store differently.
+    private func changeList(_ plan: WritePlan) -> some View {
         List {
             ForEach(WritePlan.Section.allCases, id: \.self) { section in
                 let steps = plan.steps(in: section)
@@ -74,17 +96,6 @@ struct WriteSheet: View {
             }
         }
         .frame(minHeight: 160, idealHeight: 300, maxHeight: 360)
-        if plan.target.metadata.bandPlanRegion == .canada {
-            Text("The scanner is set to the Canada band plan, so frequencies are written as entered. Any the scanner stores differently are listed afterwards.")
-                .font(.callout).foregroundStyle(.orange)
-        }
-        Text("The scanner's current contents are backed up first, so you can go back to them.")
-            .font(.callout).foregroundStyle(.secondary)
-        buttons {
-            Button("Cancel", role: .cancel) { writer.cancel() }.keyboardShortcut(.cancelAction)
-            Button("Write \(plan.steps.count) \(plan.steps.count == 1 ? "Change" : "Changes")", action: write)
-                .keyboardShortcut(.defaultAction)
-        }
     }
 
     @ViewBuilder

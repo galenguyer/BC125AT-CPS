@@ -5,9 +5,15 @@ import Observation
 @MainActor
 @Observable
 final class ScannerMonitor {
-    private(set) var devices: [USBScannerDevice] = []
+    private(set) var devices: [USBScannerDevice] = [] {
+        didSet { live.deviceChanged(selectedDevice) }
+    }
     /// The scanner reads and writes go to, by USB location. Falls back to the first one connected.
-    var selectedLocation: UInt32?
+    var selectedLocation: UInt32? {
+        didSet { live.deviceChanged(selectedDevice) }
+    }
+    /// What the selected scanner is receiving, with its volume and squelch.
+    let live = LiveMonitor()
 
     @ObservationIgnored private var watcher: USBDeviceWatcher?
 
