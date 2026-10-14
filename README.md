@@ -1,5 +1,11 @@
 # BC125AT CPS
 
+> [!WARNING]
+> **This is Claudeslop.** Nearly all of this app — the code, the protocol work, and this README —
+> was written by Claude, with a human pointing at things and plugging in the scanner. It works on my
+> scanner and I use it, but it's lovingly vibe-coded, so keep a backup and set your expectations
+> accordingly.
+
 A native macOS app for programming the **Uniden BC125AT** handheld scanner over USB: read the
 scanner, edit its 500 channels and settings, and write the changes back.
 
