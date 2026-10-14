@@ -1,0 +1,51 @@
+# Builds a release with scripts/release.sh when a version tag (v1.1, v2.0, ...) is pushed, and
+# attaches the zips and checksums to that tag's GitHub release. The tag must match the app's
+# MARKETING_VERSION. Running it by hand (Actions ▸ Release ▸ Run workflow) builds without
+# releasing and keeps the zips as a workflow artifact.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: xcodebuild -version && swift --version
+
+      - name: Check the tag matches the app version
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION=$(xcodebuild -project "BC125AT CPS.xcodeproj" -target "BC125AT CPS" -configuration Release -showBuildSettings 2>/dev/null \
+              | awk '/^ *MARKETING_VERSION = / { print $3 }')
+          if [[ "v$VERSION" != "$GITHUB_REF_NAME" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME doesn't match MARKETING_VERSION $VERSION"
+              exit 1
+          fi
+
+      - name: Build
+        run: scripts/release.sh
+
+      - name: Publish the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+              || gh release create "$GITHUB_REF_NAME" --verify-tag --title "BC125AT CPS ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+
+      - name: Keep the build
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: dist/
