@@ -32,9 +32,25 @@ struct AppSettingsView: View {
 
     @AppStorage(BackupStore.retentionKey) private var retention = BackupStore.defaultRetention
     @AppStorage(duplicateWarningsKey) private var duplicateWarnings = true
+    @State private var updates = UpdateChecker()
 
     var body: some View {
         Form {
+            Section {
+                LabeledContent("Version", value: "\(UpdateChecker.currentVersion) (\(UpdateChecker.currentBuild))")
+                LabeledContent("Updates") {
+                    HStack {
+                        updateStatus
+                        Button("Check Now") { Task { await updates.check() } }
+                            .disabled(updates.status == .checking)
+                    }
+                }
+            } header: {
+                Text("BC125AT CPS")
+            } footer: {
+                Text("Checks GitHub for a newer release each time Settings opens. To update, download the new release and replace the app in Applications.")
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 Toggle("Warn about duplicate frequencies", isOn: $duplicateWarnings)
             } header: {
@@ -56,6 +72,23 @@ struct AppSettingsView: View {
         .formStyle(.grouped)
         .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)
+        .task { await updates.check() }
+    }
+
+    @ViewBuilder private var updateStatus: some View {
+        switch updates.status {
+        case .idle, .checking:
+            ProgressView().controlSize(.small)
+        case .upToDate:
+            Label("Up to date", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .available(let version, let page):
+            Link("Version \(version) is available", destination: page)
+        case .failed(let message):
+            Label("Couldn't check", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.secondary)
+                .help(message)
+        }
     }
 }
 

@@ -79,8 +79,8 @@ open "BC125AT CPS.xcodeproj"           # the app
 scripts/release.sh                     # from a clean checkout of HEAD: test, archive, sign ad hoc, zip into dist/
 ```
 
-Pushing a version tag (`git tag -s v1.1 && git push origin v1.1`) runs the same script on GitHub
-Actions and attaches the zips to that tag's release. The tag has to match the app's version.
+Pushing a version tag (`git tag -s v1.1.0 && git push origin v1.1.0`) runs the same script on GitHub
+Actions and attaches the zips to that tag's release. The tag has to be `v` plus the app's three-field version (`MARKETING_VERSION`, e.g. `1.1.0`).
 
 `SPEC.md` describes the design and the BC125AT's serial protocol as measured on real hardware,
 including the quirks Uniden's documentation gets wrong. `phase0/` has the raw measurements.

@@ -56,7 +56,7 @@ fi
 echo "==> Checking the signature"
 codesign --verify --strict --verbose=1 "$APP"
 ENTITLEMENTS=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)
-for key in com.apple.security.app-sandbox com.apple.security.device.usb com.apple.security.files.user-selected.read-write; do
+for key in com.apple.security.app-sandbox com.apple.security.device.usb com.apple.security.files.user-selected.read-write com.apple.security.network.client; do
     grep -q "$key" <<<"$ENTITLEMENTS" || { echo "error: missing entitlement $key" >&2; exit 1; }
 done
 codesign -dv "$APP" 2>&1 | grep -E "^(Identifier|Signature|CodeDirectory)"
