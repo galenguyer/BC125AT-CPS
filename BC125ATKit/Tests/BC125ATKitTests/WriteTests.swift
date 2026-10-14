@@ -121,7 +121,7 @@ import Testing
         let mock = MockScanner() // snaps to its own plan, which the document doesn't know
         let session = ScannerSession(transport: mock)
         var document = ScannerConfig()
-        document.metadata.bandPlanRegion = .canada
+        document.settings.bandPlan = .canada
         document[channel: 1] = Channel(name: "Off plan", frequency: Frequency(parsing: "154.0062"), modulation: .nfm)
         document[channel: 2] = Channel(frequency: Frequency(parsing: "162.55"))
 

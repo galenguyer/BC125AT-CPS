@@ -84,7 +84,7 @@ private struct Engine {
     }
 
     private static let programModeOnly: Set<String> = [
-        "BLT", "BSV", "CLR", "KBP", "PRI", "SCG", "DCH", "CIN", "SCO", "GLF", "ULF", "LOF", "CLC", "SSG", "CSG", "CSP", "WXS", "CNT",
+        "BLT", "BSV", "CLR", "KBP", "BPL", "PRI", "SCG", "DCH", "CIN", "SCO", "GLF", "ULF", "LOF", "CLC", "SSG", "CSG", "CSP", "WXS", "CNT",
     ]
 
     mutating func reply(command: String, arguments: [String]) -> String {
@@ -119,6 +119,11 @@ private struct Engine {
             guard arguments.count == 2, let beep = Wire.int(arguments[0]).flatMap(KeyBeep.init(rawValue:)), let lock = Wire.bool(arguments[1])
             else { return err() }
             (config.settings.keyBeep, config.settings.keyLock) = (beep, lock)
+            return ok()
+        case "BPL":
+            if isGet { return "BPL,\(config.settings.bandPlan.rawValue)" }
+            guard let value = Wire.int(arguments[0]).flatMap(BandPlanRegion.init(rawValue:)) else { return err() }
+            config.settings.bandPlan = value
             return ok()
         case "PRI":
             if isGet { return "PRI,\(config.settings.priorityMode.rawValue)" }

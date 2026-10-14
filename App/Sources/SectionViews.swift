@@ -8,21 +8,9 @@ struct SettingsView: View {
     @Binding var config: ScannerConfig
     var issues: [ValidationIssue]
 
-    /// The band plan can't be read or set over USB with the scanner's documented commands, so
-    /// this shows what an imported Uniden file recorded (SPEC.md §3.5).
-    private var bandPlanName: String {
-        switch config.metadata.bandPlanRegion {
-        case .usa: "USA"
-        case .canada: "Canada"
-        case nil: "USA (assumed)"
-        }
-    }
-
     private var bandPlanNote: String {
-        var note = "The band plan can be changed in Uniden's BC125AT software."
-        if config.metadata.bandPlanRegion == nil {
-            note += " The scanner doesn't report it, so this shows USA unless a Uniden file recorded otherwise."
-        } else if config.metadata.bandPlanRegion == .canada {
+        var note = "The band plan sets the channel steps the scanner rounds frequencies to (SPEC.md §3.5)."
+        if config.settings.bandPlan == .canada {
             note += " Frequencies can't be checked against the Canada plan, so they're written as entered and any the scanner stores differently are shown after writing."
         }
         return note
@@ -52,7 +40,9 @@ struct SettingsView: View {
                     ForEach(PriorityMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
                 Toggle("Weather Alert Priority", isOn: $config.settings.weatherAlertPriority)
-                LabeledContent("Band Plan", value: bandPlanName)
+                Picker("Band Plan", selection: $config.settings.bandPlan) {
+                    ForEach(BandPlanRegion.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
             } header: {
                 Text("Scanning")
             } footer: {

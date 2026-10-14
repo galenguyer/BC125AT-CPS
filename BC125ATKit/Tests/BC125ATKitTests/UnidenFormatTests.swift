@@ -33,7 +33,7 @@ import Testing
         #expect(config.settings.batteryChargeHours == 14)
         #expect(config.settings.priorityMode == .plusOn)
         #expect(config.settings.weatherAlertPriority)
-        #expect(config.metadata.bandPlanRegion == .canada)
+        #expect(config.settings.bandPlan == .canada)
         // Bank, service group and custom range On/Off are raw mask digits: On means disabled.
         #expect(config.bankScanEnabled[0] == false)
         #expect(config.bankScanEnabled[1] == true)
@@ -71,7 +71,6 @@ import Testing
         var expected = config
         expected.globalLockouts = []
         expected.bankNames[3] = "Tab in name"
-        expected.metadata.bandPlanRegion = .usa
         #expect(decoded == expected)
         // Encoding what was decoded gives the same bytes again.
         #expect(UnidenFormat.encode(decoded) == UnidenFormat.encode(config))
@@ -107,7 +106,7 @@ import Testing
     @Test func warnsAboutTheCanadaBandPlan() {
         var config = ScannerConfig()
         #expect(!config.validate().contains { $0.message.contains("Canada") })
-        config.metadata.bandPlanRegion = .canada
+        config.settings.bandPlan = .canada
         #expect(config.validate().contains { $0.severity == .warning && $0.message.contains("Canada") })
     }
 }

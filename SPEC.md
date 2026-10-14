@@ -61,6 +61,7 @@ Commands marked **P** only work in program mode. Uniden's official list has exac
 | `BSV` | P | `BSV` → `BSV,hrs` | `BSV,hrs` | Battery charge time, 1–16 h |
 | `CLR` | P | – | `CLR` → `CLR,OK` | Factory-clears all memory. **Takes "dozens of seconds"**, so it needs a long timeout |
 | `KBP` | P | `KBP` → `KBP,level,lock` | `KBP,level,lock` | Beep level `0` auto / `99` off; key lock `0`/`1` |
+| `BPL` | P | `BPL` → `BPL,plan` | `BPL,plan` | Band plan `0` USA / `1` Canada; changes the channel steps (§3.5) |
 | `PRI` | P | `PRI` → `PRI,mode` | `PRI,mode` | `0` off · `1` on · `2` plus on · `3` DND |
 | `SCG` | P | `SCG` → `SCG,##########` | `SCG,##########` | Bank scan enable. **`0` = enabled, `1` = disabled**. Digits in bank order 1…10. Uniden's spec says all ten can't be disabled, **but the scanner accepts `SCG,1111111111`** (tested) |
 | `DCH` | P | – | `DCH,idx` | Delete channel 1–500 |
@@ -164,7 +165,7 @@ The rules, measured on firmware 1.06.06:
 
 In the sampled bands, an undiscovered irregular segment is possible but unlikely. If one exists, read-back (§7) catches it.
 
-**Band plan region.** All of the above is the scanner's **USA** band plan. The scanner also has a **Canada** plan, chosen by holding **1** (USA) or **2** (Canada) while powering on; per RadioReference users it uses 5 kHz in 25–54 MHz, 8.33 kHz for air and 6.25 kHz in 400–512 MHz, but it hasn't been measured here. **Uniden's software does send it to the scanner**, through a command that isn't in the documented set. Tested: after it wrote a file set to Canada, off-plan VHF-high writes snapped to a 5 kHz grid (154.0062 → 154.0050, 155.0012 → 155.0000, 165.0030 → 165.0050) instead of the USA table's 154.0025, 155.0025 and 165.0000, while 137–150.775, 225–380 and 25–54 MHz behaved as in the USA plan. The app can't read or set it with the documented commands; only Uniden's files record it (§5.1). The app keeps it in the document's metadata (kept across Read from Scanner, which can't see it), shows it read-only in Settings, and assumes USA when it isn't known.
+**Band plan region.** All of the above is the scanner's **USA** band plan. The scanner also has a **Canada** plan, chosen by holding **1** (USA) or **2** (Canada) while powering on; per RadioReference users it uses 5 kHz in 25–54 MHz, 8.33 kHz for air and 6.25 kHz in 400–512 MHz, but it hasn't been measured here. It's read and set with `BPL` (program mode only; `BPL,NG` outside it), which is in Uniden's protocol document (V1.01, p. 58) but was missed at first. The document says to "issue this command before frequency programming". Switching with `BPL` takes effect at once and doesn't change anything else: tested USA → Canada → USA on 2026-10-14, every other reply in a full dump was unchanged, including the 500 channels (frequencies already stored aren't re-snapped) and weather priority. Tested earlier: after Uniden's software wrote a file set to Canada, off-plan VHF-high writes snapped to a 5 kHz grid (154.0062 → 154.0050, 155.0012 → 155.0000, 165.0030 → 165.0050) instead of the USA table's 154.0025, 155.0025 and 165.0000, while 137–150.775, 225–380 and 25–54 MHz behaved as in the USA plan. The app treats it as an ordinary setting (`SystemSettings.bandPlan`): read with the other settings, editable in Settings, and written first, before any channel, since it changes how the scanner stores their frequencies. Documents saved before it was read have no band plan and open as USA.
 
 **On the Canada plan** the app can't predict snapping. `ScannerConfig.channelPlan` is then `BandPlan.rangesOnly`, which checks only the frequency ranges: frequencies are written as entered, with a warning on any that are off the USA plan (a hint that they may be off the Canada one too), and after writing the app reports what the scanner stored (§7).
 
@@ -257,7 +258,7 @@ Tab-separated text, CRLF line endings, one record per line, in this order:
 
 Import replaces the whole document as one undo step, keeping its global lockouts, notes, and bank names where the file has only Uniden's defaults. Any value not in the table above stops the import with the line number rather than being guessed.
 
-**Unexplained:** after Uniden's software wrote a file with `WxPri On` and band plan `Canada`, the scanner read back `WXS,0`. With `USA` it read back `WXS,1`. Either the Canada plan turns weather priority off or Uniden's software skips it; not investigated.
+**Unexplained:** after Uniden's software wrote a file with `WxPri On` and band plan `Canada`, the scanner read back `WXS,0`. With `USA` it read back `WXS,1`. It isn't the scanner: `BPL` leaves `WXS` alone in both directions, `WXS,1` can be set and read back on the Canada plan, and switching at power-on left `WXS,1` alone too (tested 2026-10-14). So Uniden's software doesn't send weather priority on (or sends it off) for a Canada file. This app writes `WXS` as the document says on either plan.
 
 ## 6. Architecture
 
@@ -295,7 +296,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, signed ad hoc **with the hardened runtime**, checks the signature and the four entitlements, builds a universal `bc125at-cli`, and writes `dist/BC125AT-CPS-<version>.zip`, `dist/bc125at-cli-<version>-macos.zip` and `SHA256SUMS-<version>.txt`. Setting `DEVELOPER_ID` and `NOTARY_PROFILE` switches to Developer ID signing and notarization (written but untested, since there's no account yet). Verified: a quarantined download is `rejected` by Gatekeeper, as the README's instructions expect, and the released app reads the scanner normally. `.github/workflows/release.yml` runs the same script on GitHub Actions when a tag like `v1.1.0` is pushed and attaches the zips to its release. Versions have three fields, and the tag must be `v` plus `MARKETING_VERSION`.
 
 ### 6.4 Building and testing
-- Kit and CLI: `cd BC125ATKit && swift test` runs the 40 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
+- Kit and CLI: `cd BC125ATKit && swift test` runs the 76 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
 - App: open `BC125AT CPS.xcodeproj`, or `xcodebuild -project "BC125AT CPS.xcodeproj" -scheme "BC125AT CPS" build`. It's ad-hoc signed ("Sign to Run Locally") with no team.
 
 ## 7. Sync Behavior
@@ -343,7 +344,7 @@ Toggles for service search groups. The 10 custom ranges, one row each: lower and
 An editable list of frequencies with add and remove. The maximum count is unknown (§3.3).
 
 ### 8.5 Settings
-Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. The band plan, read-only (§3.5), with a note that it's changed in Uniden's software. Bank names are stored in the document only and are clearly labeled that way.
+Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. The band plan (§3.5). Bank names are stored in the document only and are clearly labeled that way.
 
 ### 8.6 Live bar
 A strip along the bottom of every document window (`LiveBar`, `LiveMonitor`):
@@ -392,5 +393,5 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 | Protocol source | Uniden Operation Spec Appendix C, cross-checked with bc125py (§3) |
 
 ## 12. Open Questions
-1. Which command does Uniden's software use to set the band plan (§3.5), and why did weather priority read back off with the Canada plan (§5.1)? Finding out would need a USB capture of Uniden's software. The Canada plan's channel steps are only spot-checked (5 kHz in 150–174 MHz at four points); measuring them fully, as was done for the USA plan, would let the app predict snapping on the Canada plan too.
+1. The Canada plan's channel steps are only spot-checked (5 kHz in 150–174 MHz at four points); measuring them fully, as was done for the USA plan, would let the app predict snapping on the Canada plan too.
 2. Should the app also accept the BC126AT, the international version? bc125py looks for it by name, and it probably uses the same protocol. If yes, accept `MDL,BC126AT` and check whether its frequency ranges differ.

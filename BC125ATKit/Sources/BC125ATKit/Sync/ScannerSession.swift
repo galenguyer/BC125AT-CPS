@@ -223,7 +223,7 @@ public actor ScannerSession {
 
     // MARK: Sections
 
-    private static let settingsCommands = 13
+    private static let settingsCommands = 14
 
     private func readSettings(into config: inout ScannerConfig, step: () throws -> Void) throws {
         func fields(_ command: String, count: Int) throws -> [String] {
@@ -244,6 +244,8 @@ public actor ScannerSession {
         f = try fields("KBP", count: 2)
         config.settings.keyBeep = try parse("KBP", f, Wire.int(f[0]).flatMap(KeyBeep.init(rawValue:)))
         config.settings.keyLock = try parse("KBP", f, Wire.bool(f[1]))
+        f = try fields("BPL", count: 1)
+        config.settings.bandPlan = try parse("BPL", f, Wire.int(f[0]).flatMap(BandPlanRegion.init(rawValue:)))
         f = try fields("PRI", count: 1)
         config.settings.priorityMode = try parse("PRI", f, Wire.int(f[0]).flatMap(PriorityMode.init(rawValue:)))
         f = try fields("SCG", count: 1)

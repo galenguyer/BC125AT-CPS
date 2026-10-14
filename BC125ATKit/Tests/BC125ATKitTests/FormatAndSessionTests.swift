@@ -40,6 +40,16 @@ func sampleConfig() -> ScannerConfig {
         #expect(!text.contains(#""channel" : 3,"#), "empty channels aren't stored")
     }
 
+    /// The app's older backups have no band plan; they were all saved from a scanner on USA.
+    @Test func readsFilesWithoutABandPlanAsUSA() throws {
+        var config = sampleConfig()
+        config.settings.bandPlan = .canada
+        let text = String(decoding: try NativeFormat.encode(config), as: UTF8.self)
+        #expect(text.contains(#""bandPlan" : 1"#))
+        let older = text.replacingOccurrences(of: #""bandPlan" : 1,"#, with: "")
+        #expect(try NativeFormat.decode(Data(older.utf8)).settings.bandPlan == .usa)
+    }
+
     @Test func rejectsOtherFiles() {
         #expect(throws: NativeFormat.ReadError.notABC125ATFile) { try NativeFormat.decode(Data("{}".utf8)) }
         #expect(throws: NativeFormat.ReadError.notABC125ATFile) { try NativeFormat.decode(Data("not json".utf8)) }
@@ -115,6 +125,24 @@ func sampleConfig() -> ScannerConfig {
         #expect(progress.last?.completed == progress.last?.total)
         #expect(mock.received.last == "EPG")
         #expect(!mock.inProgramMode)
+    }
+
+    @Test func readsAndWritesTheBandPlan() async throws {
+        var canada = ScannerConfig()
+        canada.settings.bandPlan = .canada
+        let mock = MockScanner(config: canada)
+        let session = ScannerSession(transport: mock)
+        #expect(try await session.readConfiguration().settings.bandPlan == .canada)
+
+        var document = sampleConfig()
+        document.settings.bandPlan = .usa
+        let plan = WritePlan(from: canada, to: document)
+        // First, since it changes how the scanner stores channel frequencies.
+        #expect(plan.steps.first?.command == "BPL,0")
+        #expect(plan.steps.first?.detail == "Canada → USA")
+        let report = try await session.write(plan)
+        #expect(report.succeeded)
+        #expect(mock.config.settings.bandPlan == .usa)
     }
 
     @Test func programModeRefused() async {

@@ -72,8 +72,10 @@ public struct WritePlan: Sendable {
             old == new ? nil : "\(describe(old)) → \(describe(new))"
         }
 
-        // Settings
+        // Settings. The band plan goes first: it changes how channel frequencies are stored, and
+        // the scanner may reset other settings when it changes (SPEC.md §3.5).
         let (s0, s1) = (current.settings, target.settings)
+        if let d = change(s0.bandPlan, s1.bandPlan, \.displayName) { add(.settings, "Band plan", d, "BPL,\(s1.bandPlan.rawValue)") }
         if let d = change(s0.backlight, s1.backlight, \.displayName) { add(.settings, "Backlight", d, "BLT,\(s1.backlight.rawValue)") }
         if let d = change(s0.batteryChargeHours, s1.batteryChargeHours, { "\($0) h" }) { add(.settings, "Battery charge time", d, "BSV,\(s1.batteryChargeHours)") }
         if s0.keyBeep != s1.keyBeep || s0.keyLock != s1.keyLock {

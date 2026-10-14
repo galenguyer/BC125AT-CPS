@@ -2,7 +2,7 @@ import BC125ATKit
 import Foundation
 
 enum Dump {
-    static let settingsCommands = ["BLT", "BSV", "KBP", "PRI", "SCG", "SCO", "CLC", "SSG", "CSG", "WXS", "CNT", "VOL", "SQL"]
+    static let settingsCommands = ["BLT", "BSV", "KBP", "BPL", "PRI", "SCG", "SCO", "CLC", "SSG", "CSG", "WXS", "CNT", "VOL", "SQL"]
     static let commands = ["MDL", "VER"] + settingsCommands
         + (1...10).map { "CSP,\($0)" } + (1...500).map { "CIN,\($0)" }
 }

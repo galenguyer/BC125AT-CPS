@@ -163,8 +163,6 @@ struct DocumentView: View {
         var merged = newConfig
         merged.bankNames = document.config.bankNames
         merged.metadata.notes = document.config.metadata.notes
-        // The scanner can't report its band plan, so keep what the document knows.
-        merged.metadata.bandPlanRegion = document.config.metadata.bandPlanRegion
         document.config = merged
     }
 
@@ -254,17 +252,15 @@ struct DocumentView: View {
             for bank in imported.bankNames.indices where imported.bankNames[bank].isEmpty {
                 imported.bankNames[bank] = current.bankNames[bank]
             }
-            var metadata = current.metadata
-            metadata.bandPlanRegion = imported.metadata.bandPlanRegion
-            imported.metadata = metadata
+            imported.metadata = current.metadata
             document.config = imported
 
             var message = "Read \(imported.usedChannelCount) channels and every setting from \(url.lastPathComponent)."
             if !current.globalLockouts.isEmpty {
                 message += "\n\nUniden's files have no global lockouts, so this document's \(current.globalLockouts.count) were kept."
             }
-            if imported.metadata.bandPlanRegion == .canada {
-                message += "\n\nThe file is for a scanner set to the Canada band plan. Frequencies are checked against the USA band plan, so some may be stored differently than shown."
+            if imported.settings.bandPlan == .canada {
+                message += "\n\nThe file sets the band plan to Canada, so writing it will switch the scanner to Canada. Frequencies can't be checked against the Canada plan, so some may be stored differently than shown."
             }
             importSummary = ("Uniden File Imported", message)
         } catch let error as UnidenFormat.ImportError {

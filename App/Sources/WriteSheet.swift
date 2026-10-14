@@ -57,8 +57,8 @@ struct WriteSheet: View {
     private func review(_ plan: WritePlan) -> some View {
         Text("Write \(plan.steps.count) \(plan.steps.count == 1 ? "Change" : "Changes") to the Scanner?").font(.headline)
         changeList(plan)
-        if plan.target.metadata.bandPlanRegion == .canada {
-            Text("The scanner is set to the Canada band plan, so frequencies are written as entered. Any the scanner stores differently are listed afterwards.")
+        if plan.target.settings.bandPlan == .canada {
+            Text("The band plan is Canada, so frequencies are written as entered. Any the scanner stores differently are listed afterwards.")
                 .font(.callout).foregroundStyle(.orange)
         }
         Text("The scanner's current contents are backed up first, so you can go back to them.")

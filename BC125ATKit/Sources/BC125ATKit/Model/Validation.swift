@@ -64,7 +64,7 @@ extension ScannerConfig {
                 add(issue.severity, .channel(offset + 1), issue.message)
             }
             // The Canada plan hasn't been measured. Being off the USA plan is only a hint.
-            if metadata.bandPlanRegion == .canada, let frequency = channel.frequency,
+            if settings.bandPlan == .canada, let frequency = channel.frequency,
                let usa = BandPlan.bc125at.storedValue(for: frequency), usa != frequency {
                 add(.warning, .channel(offset + 1), "\(frequency) MHz isn't on the USA channel plan, so it may not be on the Canada plan either. The scanner may store a nearby frequency; you'll see what it stored after writing")
             }
@@ -98,8 +98,8 @@ extension ScannerConfig {
         if !SystemSettings.levelRange.contains(settings.squelch) {
             add(.error, .settings, "Squelch must be 0–15")
         }
-        if metadata.bandPlanRegion == .canada {
-            add(.warning, .settings, "The scanner is set to the Canada band plan, which BC125AT CPS can't check frequencies against. Frequencies are written as entered, and any the scanner stores differently are shown after writing")
+        if settings.bandPlan == .canada {
+            add(.warning, .settings, "The band plan is Canada, which BC125AT CPS can't check frequencies against. Frequencies are written as entered, and any the scanner stores differently are shown after writing")
         }
 
         if !search.serviceGroupsEnabled.contains(true) {

@@ -52,7 +52,7 @@ public enum UnidenFormat {
                     config.settings.batteryChargeHours = try reader.integer("battery charge time")
                     config.settings.volume = try reader.integer("volume")
                     config.settings.squelch = try reader.integer("squelch")
-                    config.metadata.bandPlanRegion = try reader.value(Dictionary(uniqueKeysWithValues: BandPlanRegion.allCases.map { ($0.rawValue, $0) }), "band plan")
+                    config.settings.bandPlan = try reader.value(["USA": .usa, "Canada": .canada], "band plan")
                 case "Priority":
                     config.settings.priorityMode = try reader.value(priorityNames, "priority mode")
                 case "WxPri":
@@ -115,7 +115,7 @@ public enum UnidenFormat {
         let settings = config.settings
         add("Misc", name(settings.backlight, in: backlightNames), name(settings.keyBeep, in: ["Auto": .auto, "Off": .off]),
             onOff(settings.keyLock), settings.contrast, settings.batteryChargeHours, settings.volume, settings.squelch,
-            (config.metadata.bandPlanRegion ?? .usa).rawValue)
+            settings.bandPlan.displayName)
         add("Priority", name(settings.priorityMode, in: priorityNames))
         add("WxPri", onOff(settings.weatherAlertPriority))
         for group in ServiceSearchGroup.allCases {

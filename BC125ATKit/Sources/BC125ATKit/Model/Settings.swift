@@ -41,7 +41,15 @@ public enum PriorityMode: Int, CaseIterable, Codable, Sendable {
     }
 }
 
-/// `BLT`, `BSV`, `KBP`, `PRI`, `CNT`, `WXS`, `VOL`, `SQL`.
+/// The scanner's two band plans (`BPL`), which use different channel steps in some ranges.
+public enum BandPlanRegion: Int, CaseIterable, Codable, Sendable {
+    case usa = 0
+    case canada = 1
+
+    public var displayName: String { self == .usa ? "USA" : "Canada" }
+}
+
+/// `BLT`, `BSV`, `KBP`, `BPL`, `PRI`, `CNT`, `WXS`, `VOL`, `SQL`.
 public struct SystemSettings: Hashable, Codable, Sendable {
     public var backlight: Backlight = .keypress
     public var keyBeep: KeyBeep = .auto
@@ -56,8 +64,28 @@ public struct SystemSettings: Hashable, Codable, Sendable {
     public var volume = 8
     /// 0 (open) – 15 (closed).
     public var squelch = 2
+    public var bandPlan: BandPlanRegion = .usa
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case backlight, keyBeep, keyLock, contrast, batteryChargeHours, priorityMode, weatherAlertPriority, volume, squelch, bandPlan
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        backlight = try c.decode(Backlight.self, forKey: .backlight)
+        keyBeep = try c.decode(KeyBeep.self, forKey: .keyBeep)
+        keyLock = try c.decode(Bool.self, forKey: .keyLock)
+        contrast = try c.decode(Int.self, forKey: .contrast)
+        batteryChargeHours = try c.decode(Int.self, forKey: .batteryChargeHours)
+        priorityMode = try c.decode(PriorityMode.self, forKey: .priorityMode)
+        weatherAlertPriority = try c.decode(Bool.self, forKey: .weatherAlertPriority)
+        volume = try c.decode(Int.self, forKey: .volume)
+        squelch = try c.decode(Int.self, forKey: .squelch)
+        // The app's backups from before `BPL` was read don't have it; the scanner was on USA then.
+        bandPlan = try c.decodeIfPresent(BandPlanRegion.self, forKey: .bandPlan) ?? .usa
+    }
 
     public static let contrastRange = 1...15
     public static let batteryChargeRange = 1...16

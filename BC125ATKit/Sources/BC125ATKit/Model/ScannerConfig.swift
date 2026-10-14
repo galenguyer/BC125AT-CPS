@@ -24,17 +24,12 @@ public struct ScannerConfig: Hashable, Sendable {
         public var firmware: String?
         public var readAt: Date?
         public var notes: String
-        /// The scanner's band plan, when known. Only Uniden's files record it; the scanner's
-        /// documented commands can't read or set it (it's chosen by holding 1 or 2 at power-on).
-        public var bandPlanRegion: BandPlanRegion?
 
-        public init(model: String? = nil, firmware: String? = nil, readAt: Date? = nil, notes: String = "",
-                    bandPlanRegion: BandPlanRegion? = nil) {
+        public init(model: String? = nil, firmware: String? = nil, readAt: Date? = nil, notes: String = "") {
             self.model = model
             self.firmware = firmware
             self.readAt = readAt
             self.notes = notes
-            self.bandPlanRegion = bandPlanRegion
         }
     }
 
@@ -66,17 +61,11 @@ public struct ScannerConfig: Hashable, Sendable {
 
     public var usedChannelCount: Int { channels.count { !$0.isEmpty } }
 
-    /// The channel plan to predict stored frequencies with: the measured USA plan unless this
-    /// configuration is known to be for a scanner on the Canada band plan.
-    public var channelPlan: BandPlan { metadata.bandPlanRegion == .canada ? .rangesOnly : .bc125at }
+    /// The channel plan to predict stored frequencies with: the measured USA plan, or only the
+    /// frequency ranges on the unmeasured Canada plan.
+    public var channelPlan: BandPlan { settings.bandPlan == .canada ? .rangesOnly : .bc125at }
 
     public func usedChannelCount(inBank bank: Int) -> Int {
         Channel.channels(inBank: bank).count { !self[channel: $0].isEmpty }
     }
-}
-
-/// The scanner's two band plans, which use different channel steps in some ranges.
-public enum BandPlanRegion: String, CaseIterable, Codable, Sendable {
-    case usa = "USA"
-    case canada = "Canada"
 }
