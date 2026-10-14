@@ -13,16 +13,41 @@ squircle.addClip()
 NSGradient(colors: [NSColor(srgbRed: 0.04, green: 0.12, blue: 0.27, alpha: 1), NSColor(srgbRed: 0.12, green: 0.38, blue: 0.72, alpha: 1)])!
     .draw(in: body, angle: 90)
 
-// Radio waves from the antenna tip.
+// Airliner heading up and to the left, beside the antenna. Drawn nose-up
+// around the origin, then rotated 45° counterclockwise into place.
 let tip = CGPoint(x: 432, y: 800)
-for (i, radius) in [62.0, 114.0, 166.0].enumerated() {
-    let arc = NSBezierPath()
-    arc.appendArc(withCenter: tip, radius: radius, startAngle: -35, endAngle: 35)
-    arc.lineWidth = 26
-    arc.lineCapStyle = .round
-    NSColor.white.withAlphaComponent(0.9 - Double(i) * 0.25).setStroke()
-    arc.stroke()
+var airplane = [NSBezierPath(roundedRect: CGRect(x: -20, y: -125, width: 40, height: 255), xRadius: 20, yRadius: 20)]
+for side in [1.0, -1.0] {
+    for outline in [
+        // Main wing.
+        [(16.0, 38.0), (128.0, -28.0), (128.0, -52.0), (16.0, -18.0)],
+        // Horizontal stabilizer.
+        [(12.0, -82.0), (58.0, -112.0), (58.0, -128.0), (12.0, -114.0)],
+    ] {
+        let part = NSBezierPath()
+        part.move(to: CGPoint(x: side * outline[0].0, y: outline[0].1))
+        for point in outline.dropFirst() {
+            part.line(to: CGPoint(x: side * point.0, y: point.1))
+        }
+        part.close()
+        airplane.append(part)
+    }
 }
+var placement = AffineTransform(scale: 0.8)
+placement.append(AffineTransform(rotationByDegrees: 45))
+placement.append(AffineTransform(translationByX: 660, byY: 800))
+// One transparency layer, so overlapping parts read as a single shape with one shadow.
+ctx.setShadow(offset: CGSize(width: 0, height: -8), blur: 18, color: NSColor.black.withAlphaComponent(0.35).cgColor)
+ctx.setAlpha(0.95)
+ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+NSColor.white.setFill()
+for part in airplane {
+    part.transform(using: placement)
+    part.fill()
+}
+ctx.endTransparencyLayer()
+ctx.setAlpha(1)
+ctx.setShadow(offset: .zero, blur: 0, color: nil)
 
 // Antenna.
 let antenna = NSBezierPath()
@@ -46,7 +71,7 @@ NSGradient(colors: [NSColor(white: 1, alpha: 0.10), NSColor(white: 1, alpha: 0)]
 let lcd = CGRect(x: 384, y: 480, width: 256, height: 140)
 NSColor(srgbRed: 0.98, green: 0.66, blue: 0.16, alpha: 1).setFill()
 NSBezierPath(roundedRect: lcd, xRadius: 18, yRadius: 18).fill()
-let text = NSAttributedString(string: "162.550", attributes: [
+let text = NSAttributedString(string: "121.500", attributes: [
     .font: NSFont.monospacedDigitSystemFont(ofSize: 50, weight: .heavy),
     .foregroundColor: NSColor(srgbRed: 0.25, green: 0.13, blue: 0.0, alpha: 0.9),
 ])
