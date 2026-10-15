@@ -76,7 +76,7 @@ Commands marked **P** only work in program mode. Uniden's official list has exac
 | `CSP` | P | `CSP,idx` → `CSP,idx,lo,hi,` | `CSP,idx,lo,hi` | Range index 1–10. Reply is `CSP,1,00250000,00279950`. **No trailing comma** |
 | `WXS` | P | `WXS` → `WXS,pri` | `WXS,pri` | Weather alert priority `0`/`1` |
 | `CNT` | P | `CNT` → `CNT,lvl` | `CNT,lvl` | Contrast 1–15. **An out-of-range value gets `CNT,OK` but is ignored**: `CNT,20` left it at 8. Validation must catch it |
-| `VOL` | – | `VOL` → `VOL,lvl` | `VOL,lvl` | 0–15 |
+| `VOL` | – | `VOL` → `VOL,lvl` | `VOL,lvl` | 0–15. Read with the settings, but only ever set from the live bar, never by a write (§7.2) |
 | `SQL` | – | `SQL` → `SQL,lvl` | `SQL,lvl` | `0` open · 1–14 · `15` closed |
 | `STS` | – | `STS` → `STS,011000,line1,,line2,,…` | – | Not in Uniden's list. The screen, line by line (e.g. `BANK3` / `SCAN` while scanning, the name and `CH133  127.6750` in hold), then status flags. Icons are custom glyphs that don't survive UTF-8 decoding. Unused by the app (§3.8) |
 | `KEY` | – | – | `KEY,key,P` → `KEY,OK` | Not in Uniden's list. Presses a key (§3.8) |
@@ -317,25 +317,40 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, signed ad hoc **with the hardened runtime**, checks the signature and the four entitlements, builds a universal `bc125at-cli`, and writes `dist/BC125AT-CPS-<version>.zip`, `dist/bc125at-cli-<version>-macos.zip` and `SHA256SUMS-<version>.txt`. Setting `DEVELOPER_ID` and `NOTARY_PROFILE` switches to Developer ID signing and notarization (written but untested, since there's no account yet). Verified: a quarantined download is `rejected` by Gatekeeper, as the README's instructions expect, and the released app reads the scanner normally. `.github/workflows/release.yml` runs the same script on GitHub Actions when a tag like `v1.1.0` is pushed and attaches the zips to its release. Versions have three fields, and the tag must be `v` plus `MARKETING_VERSION`.
 
 ### 6.4 Building and testing
-- Kit and CLI: `cd BC125ATKit && swift test` runs the 85 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
+- Kit and CLI: `cd BC125ATKit && swift test` runs the 86 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
 - App: open `BC125AT CPS.xcodeproj`, or `xcodebuild -project "BC125AT CPS.xcodeproj" -scheme "BC125AT CPS" build`. It's ad-hoc signed ("Sign to Run Locally") with no team.
 
 ## 7. Sync Behavior
 
-1. **Read from Scanner** (⇧⌘R): checks `MDL` is BC125AT, runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. A progress sheet can cancel; afterwards the scanner goes back to scanning or to hold on its channel, and the result says which (§3.8). On an untitled, unchanged document the read fills it directly; otherwise it asks before replacing. App-only bank names and notes are kept, and **one ⌘Z undoes the read**. SwiftUI registers that undo for changes made through the document binding, so the app must not register its own as well, or every read would take two ⌘Z presses. (SwiftUI's undo entry has no action name, so the menu says "Undo", not "Undo Read from Scanner".) The result opens as a new untitled document, or replaces the current one after a confirmation.
-2. **Write to Scanner** (⇧⌘U):
-   1. Validate the document. Any errors stop the write and list the problems.
-   2. Read the scanner's current state; it's always read fresh. If nothing differs, the app says the scanner is up to date and writes nothing.
-   3. Work out the diff (`WritePlan`) and show a review sheet listing the changes by section, plus anything the scanner will store differently (for example "154.0062 MHz will be stored as 154.0025 MHz").
-   4. Write only the changed items, read each one back, and check it. A mismatch caused by snapping (§3.5), truncation, or a priority flag cleared elsewhere in the bank (§3.1) is reported as an adjustment, not a failure, and the document is updated to match.
-   5. Report the result. A partial failure lists exactly which items the scanner rejected and which still differ after reading back; the document is then left as it was. On success with adjustments, the document is updated to the stored values (one undo step).
-   6. A channel that reads back identical except for its frequency was snapped by the scanner to a value the app didn't predict (always possible on the unmeasured Canada plan, §3.5). That isn't a failure: the result lists "154.0062 MHz was stored as 154.0025 MHz" and the document takes the stored value (`WriteReport.storedDifferently`, `acceptedConfig`).
-   - Under the hood: one command per difference; priority channels are written last, because setting one clears the bank's others; lockout removals go before additions. Rejected commands (`ERR`/`NG`) are recorded and the rest still written; a timeout or cancel stops the write. Verification reads the whole scanner back and plans again, so anything still in that plan is a mismatch.
-3. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
-4. **Compare with Scanner** (⇧⌘D): reads the scanner and lists how it differs from the document, as the write review would, without writing. Works even when the document has errors.
-5. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
-6. **After writing**, the scanner goes back to what it was doing: scanning, or hold on the same channel (§3.8). `EPG` alone would leave it in hold on channel 1. The completion message says which.
-7. **Automatic backup**: every write first saves the scanner's previous state to `Application Support/BC125AT CPS/Backups/Scanner backup <date> at <time>.bc125at`, inside the app's sandbox container. If the backup can't be saved, nothing is written. The newest 50 are kept. Scanner ▸ Show Backups in Finder opens the folder.
+Every read, write and compare goes through `LiveMonitor.withScanner` (§8.6), so the live bar stops polling and the app has the scanner to itself. Each step below names the commands it sends.
+
+### 7.1 Read from Scanner (⇧⌘R)
+1. **Pause the live bar** and open the scanner over USB.
+2. **Note what the scanner is doing** (`GLG`, §3.8): scanning, or holding on a channel. It polls every 100 ms for 1 s, or 3.5 s while a signal is open. If the scanner isn't on a memory channel (a menu, search, Close Call Only, weather), the mode is unknown and step 6 is skipped.
+3. **Identify it**: `MDL` must be `BC125AT`; `VER` gives the firmware.
+4. **Enter program mode**: `PRG`. `PRG,NG` means the scanner is in a menu, Direct Entry or Quick Save; the app asks the user to leave it and try again.
+5. **Read everything**, about 530 round trips, about 2 s: the settings (`BLT`, `BSV`, `KBP`, `BPL`, `PRI`, `SCG`, `SCO`, `CLC`, `SSG`, `CSG`, `WXS`, `CNT`, `VOL`, `SQL`), the 10 custom ranges (`CSP`), the 500 channels (`CIN`), and the global lockouts (`GLF,0`, then `GLF` until `-1`). Then `EPG`, which always leaves the scanner held on channel 1. `EPG` is sent even on an error or cancel.
+6. **Put the scanner back** (§3.8): Scan if it was scanning, or Scan, Hold, the channel's digits, Hold if it was holding, then check with `GLG`.
+7. **Close the connection and resume the live bar.** The result sheet gives the channel count and firmware, and says whether the scanner is scanning again or back on hold on its channel.
+8. **Update the document**: on an untitled, unchanged document the read fills it directly; otherwise the app asks before replacing. App-only bank names and notes are kept, and **one ⌘Z undoes the read**. SwiftUI registers that undo for changes made through the document binding, so the app must not register its own as well, or every read would take two ⌘Z presses. (SwiftUI's undo entry has no action name, so the menu says "Undo", not "Undo Read from Scanner".)
+
+### 7.2 Write to Scanner (⇧⌘U)
+1. **Validate the document.** Any errors stop the write and list the problems.
+2. **Read the scanner fresh**: all of §7.1 steps 1–7. What the scanner holds is never assumed from an earlier read, since it can be changed on the keypad at any time.
+3. **Plan** (`WritePlan`): compare the scanner with the document as the scanner will store it (frequencies snapped to the band plan, §3.5; names trimmed), giving one command per difference. **Volume and squelch are never in the plan**: they're the listener's, changed on the scanner or with the live bar at any time, so the plan keeps the scanner's levels (the ones just read) whatever the document says. If nothing differs, the app says the scanner is up to date and stops.
+4. **Review**: a sheet lists the changes by section, plus anything the scanner will store differently ("154.0062 MHz will be stored as 154.0025 MHz"). Nothing has been written yet; Cancel stops here.
+5. **Back up**: the scanner contents read in step 2 are saved (§7.3, item 4). If the backup can't be saved, nothing is written.
+6. **Open the scanner again** and note its mode (§7.1 steps 1–2), since time has passed since the review.
+7. **Write**: `MDL`/`VER`, `PRG`, then the plan's commands in order. `BPL` goes first, because it changes how frequencies are stored; channels follow, with priority channels last (setting one clears the bank's others); lockout removals come before additions. A rejected command (`ERR`/`NG`) is recorded and the rest still sent; a timeout or cancel stops the write.
+8. **Verify**: read the whole scanner back (§7.1 step 5, ending with `EPG`) and plan again; anything still in that plan is a mismatch. A channel that matches except for its frequency was snapped to a value the app didn't predict (possible where the plan was only sampled, §3.5): that's reported as "stored as", not a failure (`WriteReport.storedDifferently`). Volume and squelch are taken from the read-back, in case they were changed during the write.
+9. **Put the scanner back** and close (§7.1 steps 6–7).
+10. **Report and update the document**: a partial failure lists exactly what the scanner rejected and what still differs, and leaves the document as it was. On success, the document takes what the scanner stored (snapped frequencies, trimmed names, the scanner's volume and squelch) as one undo step (`WriteReport.acceptedConfig`). The sheet says whether the scanner is scanning again or back on hold on its channel.
+
+### 7.3 Other rules
+1. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
+2. **Compare with Scanner** (⇧⌘D): §7.2 steps 2–3, then lists how the scanner differs from the document, as the write review would, without writing. Like a write, it ignores volume and squelch. Works even when the document has errors.
+3. **Release Scanner** (menu item): sends `EPG` on its own (and doesn't touch scan or hold), to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
+4. **Automatic backup**: every write first saves the scanner's previous state to `Application Support/BC125AT CPS/Backups/Scanner backup <date> at <time>.bc125at`, inside the app's sandbox container. If the backup can't be saved, nothing is written. The newest 50 are kept. Scanner ▸ Show Backups in Finder opens the folder.
 
 ## 8. User Interface
 
@@ -365,7 +380,7 @@ Toggles for service search groups. The 10 custom ranges, one row each: lower and
 An editable list of frequencies with add and remove. It holds at most 100 (§3.3; the owner's manual agrees).
 
 ### 8.5 Settings
-Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. The band plan (§3.5). Bank names are stored in the document only and are clearly labeled that way.
+Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch (saved with the document but never written, §7.2). The band plan (§3.5). Bank names are stored in the document only and are clearly labeled that way.
 
 ### 8.6 Live bar
 A strip along the bottom of every document window (`LiveBar`, `LiveMonitor`):

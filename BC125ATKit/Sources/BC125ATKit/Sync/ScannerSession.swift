@@ -180,6 +180,9 @@ public actor ScannerSession {
             accepted[channel: number] = expected
             storedDifferently.append(.init(title: "Channel \(number)", detail: "\(sent) MHz was stored as \(kept) MHz"))
         }
+        // Volume and squelch aren't written, and may have been changed on the scanner meanwhile.
+        accepted.settings.volume = actual.settings.volume
+        accepted.settings.squelch = actual.settings.squelch
         // The target is already as stored, so compare without snapping it again.
         let remaining = WritePlan(from: actual, to: accepted, bandPlan: .rangesOnly)
         return WriteReport(written: written, failures: failures, mismatches: remaining.steps, scannerConfig: actual,

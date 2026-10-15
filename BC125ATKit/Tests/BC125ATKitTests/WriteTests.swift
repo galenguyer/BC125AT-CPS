@@ -152,6 +152,27 @@ import Testing
         #expect(report.acceptedConfig[channel: 2] == document[channel: 2])
     }
 
+    /// Volume and squelch belong to the listener: a write leaves the scanner's levels alone, even
+    /// when the document's differ, and the document takes the scanner's levels afterwards.
+    @Test func writingLeavesVolumeAndSquelchAlone() async throws {
+        var scanner = sampleConfig()
+        scanner.settings.volume = 12
+        scanner.settings.squelch = 7
+        let mock = MockScanner(config: scanner)
+        var document = scanner
+        document.settings.volume = 2
+        document.settings.squelch = 0
+        document.settings.contrast = 5
+
+        let plan = WritePlan(from: scanner, to: document)
+        #expect(plan.steps.map(\.command) == ["CNT,5"])
+        let report = try await ScannerSession(transport: mock).write(plan)
+        #expect(report.succeeded)
+        #expect(!mock.received.contains { $0.hasPrefix("VOL,") || $0.hasPrefix("SQL,") }, "reading the levels is fine; setting them isn't")
+        #expect(mock.config.settings.volume == 12 && mock.config.settings.squelch == 7)
+        #expect(report.acceptedConfig.settings.volume == 12 && report.acceptedConfig.settings.squelch == 7)
+    }
+
     /// A channel started from its name has no frequency yet: it's flagged, and not written.
     @Test func nameOnlyChannelIsWarnedAboutAndNotWritten() {
         var document = ScannerConfig()

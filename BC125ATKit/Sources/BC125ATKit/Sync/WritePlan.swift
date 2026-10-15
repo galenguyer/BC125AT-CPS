@@ -61,8 +61,13 @@ public struct WritePlan: Sendable {
     public func steps(in section: Section) -> [Step] { steps.filter { $0.section == section } }
 
     /// Predicts stored frequencies with `bandPlan`, or the document's own `channelPlan` if nil.
+    ///
+    /// Volume and squelch are never written: they're the listener's to change at any time, on
+    /// the scanner or in the live bar, so the target keeps the scanner's current levels (§7).
     public init(from current: ScannerConfig, to document: ScannerConfig, bandPlan: BandPlan? = nil) {
-        let target = document.storedOnScanner(bandPlan: bandPlan)
+        var target = document.storedOnScanner(bandPlan: bandPlan)
+        target.settings.volume = current.settings.volume
+        target.settings.squelch = current.settings.squelch
         self.target = target
         var steps: [Step] = []
         func add(_ section: Section, _ title: String, _ detail: String, _ command: String) {
@@ -85,8 +90,6 @@ public struct WritePlan: Sendable {
         if let d = change(s0.priorityMode, s1.priorityMode, \.displayName) { add(.settings, "Priority mode", d, "PRI,\(s1.priorityMode.rawValue)") }
         if let d = change(s0.contrast, s1.contrast, { "\($0)" }) { add(.settings, "Contrast", d, "CNT,\(s1.contrast)") }
         if let d = change(s0.weatherAlertPriority, s1.weatherAlertPriority, onOff) { add(.settings, "Weather alert priority", d, "WXS,\(Wire.flag(s1.weatherAlertPriority))") }
-        if let d = change(s0.volume, s1.volume, { "\($0)" }) { add(.settings, "Volume", d, "VOL,\(s1.volume)") }
-        if let d = change(s0.squelch, s1.squelch, { "\($0)" }) { add(.settings, "Squelch", d, "SQL,\(s1.squelch)") }
 
         // Banks
         if let d = change(current.bankScanEnabled, target.bankScanEnabled, Self.describeBanks) {

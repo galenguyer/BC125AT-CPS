@@ -21,11 +21,16 @@ struct SettingsView: View {
                 }
                 Toggle("Key Lock", isOn: $config.settings.keyLock)
             }
-            Section("Audio") {
+            Section {
                 Stepper("Volume: \(config.settings.volume)", value: $config.settings.volume, in: SystemSettings.levelRange)
                 Stepper(value: $config.settings.squelch, in: SystemSettings.levelRange) {
                     Text("Squelch: \(config.settings.squelch)") + Text(squelchNote).foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("Audio")
+            } footer: {
+                Text("Saved with the document, but never written to the scanner, so a write keeps whatever levels it's set to. Change them on the scanner or with the live bar's sliders.")
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Picker("Priority Mode", selection: $config.settings.priorityMode) {
