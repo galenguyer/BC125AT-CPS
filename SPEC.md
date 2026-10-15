@@ -313,7 +313,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 ### 6.3 Sandbox & Distribution
 - The app is sandboxed with the **`com.apple.security.device.usb`** entitlement and user-selected file read/write access, plus `com.apple.security.network.client` for the update check, which asks the GitHub releases API for the latest release at launch and when Settings opens. A newer release shows a one-line yellow note at the bottom of the sidebar, the same height as the live bar: clicking it opens the release, and its X hides it until the next launch or skips that version. Verified: the ad-hoc-signed, sandboxed app reads the scanner, but only through IOUSBLib (§2).
 - It's distributed as a zipped `.app` attached to GitHub Releases. It isn't on the Mac App Store.
-- Releases up to 1.5.1 were **ad-hoc signed and not notarized**, and the README explains how to get past Gatekeeper for them: on macOS 15, open System Settings → Privacy & Security → "Open Anyway", or run `xattr -dr com.apple.quarantine`. Since October 2026 there's a paid Apple Developer account (team `L3T933ZXSR`), and releases are signed with a Developer ID and notarized.
+- Releases are **signed with a Developer ID and notarized** (Apple Developer team `L3T933ZXSR`), so they open without a Gatekeeper warning.
 - Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, re-signs it with a Developer ID **with the hardened runtime**, checks the signature and the four entitlements, builds a universal `bc125at-cli` signed the same way, writes `dist/BC125AT-CPS-<version>.zip` and `dist/bc125at-cli-<version>-macos.zip`, notarizes both, staples the app's ticket, and writes `SHA256SUMS-<version>.txt`. It notarizes with a `NOTARY_PROFILE` keychain profile or an App Store Connect API key (`NOTARY_KEY`, `NOTARY_KEY_ID`, `NOTARY_ISSUER`), and stops if either step is unavailable. `scripts/release-unsigned.sh` builds the same thing signed ad hoc and not notarized; a quarantined download of that is `rejected` by Gatekeeper, as the README's instructions expect. `.github/workflows/release.yml` runs `release.sh` on GitHub Actions when a tag like `v1.1.0` is pushed, importing the certificate and API key from repository secrets, and attaches the zips to its release. Versions have three fields, and the tag must be `v` plus `MARKETING_VERSION`.
 
 ### 6.4 Building and testing
@@ -421,7 +421,7 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 | Topic | Decision |
 |---|---|
 | Minimum OS | macOS 15 (Swift 6, Observation, modern `Table`) |
-| Distribution | GitHub Releases, ad-hoc signed and not notarized for now (§6.3) |
+| Distribution | GitHub Releases, Developer ID signed and notarized (§6.3) |
 | Uniden files | Import and export, milestone 6 |
 | Bundle ID | `net.k9fgt.bc125at` |
 | License | MIT. bc125py is also MIT (© 2022–2023 Max Loiacono), so its tables can be reused with attribution in a NOTICE file |

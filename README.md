@@ -32,17 +32,8 @@ Requires macOS 15 or later and a BC125AT connected with a USB data cable. No dri
 ## Installing
 
 Download `BC125AT-CPS-<version>.zip` from the project's GitHub Releases page, unzip it, and
-move **BC125AT CPS** to your Applications folder.
-
-The app isn't notarized by Apple yet, so the first time you open it macOS will say it can't
-check the app for malicious software. To open it anyway:
-
-1. Try to open the app once, then click **Done** in the warning.
-2. Open **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway** next to
-   the message about BC125AT CPS.
-3. Confirm with your password or Touch ID. After that it opens normally.
-
-Or, in Terminal: `xattr -dr com.apple.quarantine "/Applications/BC125AT CPS.app"`
+move **BC125AT CPS** to your Applications folder. The app is signed and notarized by Apple, so it
+opens like any other.
 
 ## Using it
 
