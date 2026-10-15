@@ -19,7 +19,9 @@ scanner, edit its 500 channels and settings, and write the changes back.
   so it tells you when a frequency will be stored differently (for example, 154.0062 MHz is stored
   as 154.0025).
 - **Live bar** along the bottom of the window: what the scanner is receiving right now, the last
-  transmission heard, and volume and squelch sliders that change the scanner as you drag.
+  transmission heard, **Scan** and **Hold** buttons, and volume and squelch sliders that change
+  the scanner as you drag. Right-click a channel and choose **Listen on Scanner** to hold the
+  scanner on it.
 - **Compare with Scanner** (⇧⌘D) lists how the scanner differs from your document without writing.
 - Saves configurations as `.bc125at` files, and imports and exports CSV (including bc125py's CSV).
 - Opens and saves files from Uniden's own BC125AT software (`.bc125at_ss`, **File ▸ Import Uniden File…**
@@ -49,8 +51,8 @@ Or, in Terminal: `xattr -dr com.apple.quarantine "/Applications/BC125AT CPS.app"
 3. Edit channels in the table, or open the inspector (⌥⌘I) for the selected channel. The issues
    button in the toolbar lists anything the scanner would reject or change.
 4. Choose **Scanner ▸ Write to Scanner** (⇧⌘U), review the changes, and click **Write**.
-5. After reading or writing, the scanner is left in Scan Hold. Press **Scan** on the scanner to
-   start scanning again.
+5. After reading or writing, the scanner goes back to what it was doing: scanning, or holding on
+   the same channel.
 
 Before every write, the scanner's current contents are saved as a `.bc125at` file. To find them,
 choose **Scanner ▸ Show Backups in Finder**; open one and write it to go back. The newest 50 are
@@ -69,6 +71,9 @@ bc125at-cli write my-scanner.bc125at --yes --backup before.bc125at
 bc125at-cli write my-scanner.bc125at_ss    # Uniden's files work too
 bc125at-cli convert my-scanner.bc125at_ss my-scanner.bc125at   # convert formats
 bc125at-cli release                    # take a stuck scanner out of program mode
+bc125at-cli mode                       # scanning, or holding on which channel
+bc125at-cli scan                       # resume scanning
+bc125at-cli hold 133                   # hold on channel 133
 ```
 
 ## Building from source

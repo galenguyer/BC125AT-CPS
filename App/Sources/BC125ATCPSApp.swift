@@ -153,7 +153,7 @@ struct ScannerCommands: Commands {
         guard let device = monitor.selectedDevice else { return }
         Task {
             do {
-                try await monitor.live.withScanner("Paused while releasing the scanner", device: device) { session in
+                try await monitor.live.withScanner("Paused while releasing the scanner", device: device, keepingMode: false) { session in
                     try await session.releaseProgramMode()
                 }
             } catch {

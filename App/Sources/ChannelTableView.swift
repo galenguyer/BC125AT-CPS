@@ -11,6 +11,7 @@ struct ChannelTableView: View {
     /// Identifies this document window, so drags can tell a move from a copy between documents.
     var window: UUID
 
+    @Environment(ScannerMonitor.self) private var monitor
     @AppStorage("showEmptyChannels") private var showEmptyChannels = false
     @AppStorage("showInspector") private var showInspector = false
     @State private var searchText = ""
@@ -20,7 +21,8 @@ struct ChannelTableView: View {
     var body: some View {
         let rows = makeRows()
         ChannelTable(config: $config, rows: rows, selection: $selection, sort: $sort,
-                     window: window, pasteStart: numbers.first ?? 1, scope: numbers.first ?? 0)
+                     window: window, pasteStart: numbers.first ?? 1, scope: numbers.first ?? 0,
+                     listen: monitor.live.canControl ? { monitor.live.hold(on: $0) } : nil)
             // Switching to another bank starts fresh, as a new table would.
             .onChange(of: numbers) {
                 selection = []

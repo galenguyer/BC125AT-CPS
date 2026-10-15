@@ -22,6 +22,9 @@ let usage = """
                                --allow-write also runs round-trip tests that modify, then restore,
                                spare empty channels and a few settings.
       release                  Send EPG to take a stuck scanner out of program mode
+      mode                     Say whether the scanner is scanning or in hold, and on which channel
+      scan                     Press Scan: resume scanning
+      hold <channel>           Hold on a channel (1-500)
       probe freq <from> <to> <step> [--mod M]
       probe freq --values <f1,f2,...> [--mod M] [--spread N]
                                Write each frequency (100 Hz units) to a spare empty channel and
@@ -102,6 +105,27 @@ enum CLI {
         if command == "read" {
             guard let path = arguments.first else { fail("read needs an output file") }
             readDocument(to: path)
+            exit(0)
+        }
+        if command == "mode" || command == "scan" || command == "hold" {
+            let channel = arguments.first.flatMap { Int($0) }
+            if command == "hold", !(channel.map { (1...ScannerConfig.channelCount).contains($0) } ?? false) {
+                fail("hold needs a channel number, 1-500")
+            }
+            let message = runBlocking {
+                let session = try ScannerSession.open()
+                defer { Task { await session.close() } }
+                switch command {
+                case "scan":
+                    try await session.scan()
+                    return "Scanning"
+                case "hold":
+                    return try await session.hold(on: channel!) ? "Holding on channel \(channel!)" : "The scanner didn't stop on channel \(channel!) (is it empty?)"
+                default:
+                    return describe(try await session.scanMode())
+                }
+            }
+            print(message)
             exit(0)
         }
         if command == "convert" {
@@ -226,7 +250,7 @@ func readDocument(to path: String) {
     let config = runBlocking {
         let session = try ScannerSession.open()
         defer { Task { await session.close() } }
-        return try await session.readConfiguration()
+        return try await keepingScanMode(session) { try await session.readConfiguration() }
     }
     save(config, to: path)
     let issues = config.validate()
@@ -247,7 +271,7 @@ func writeDocument(from path: String, confirmed: Bool, backupPath: String?) {
     let current = runBlocking {
         let session = try ScannerSession.open()
         defer { Task { await session.close() } }
-        return try await session.readConfiguration()
+        return try await keepingScanMode(session) { try await session.readConfiguration() }
     }
     // Uniden's files have no global lockouts, so leave the scanner's alone.
     if isUniden(path) { document.globalLockouts = current.globalLockouts }
@@ -263,13 +287,33 @@ func writeDocument(from path: String, confirmed: Bool, backupPath: String?) {
     let report = runBlocking {
         let session = try ScannerSession.open()
         defer { Task { await session.close() } }
-        return try await session.write(plan)
+        return try await keepingScanMode(session) { try await session.write(plan) }
     }
     print("Wrote \(report.written) of \(plan.steps.count) changes.")
     for failure in report.failures { print("failed: \(failure.step.title): \(failure.reason)") }
     for mismatch in report.mismatches { print("mismatch after read-back: \(mismatch.title): \(mismatch.detail)") }
     for stored in report.storedDifferently { print("stored differently: \(stored.title): \(stored.detail)") }
     print(report.succeeded ? "Verified: the scanner matches the document." : "The scanner does NOT fully match the document.")
+}
+
+/// Notes whether the scanner is scanning or held, runs `work` (which leaves it held on channel 1),
+/// then puts it back, as the app does (SPEC.md §3.8).
+func keepingScanMode<T: Sendable>(_ session: ScannerSession, _ work: () async throws -> T) async throws -> T {
+    let mode = try? await session.scanMode()
+    let result = try await work()
+    if let mode {
+        let restored = (try? await session.restore(mode)) ?? false
+        FileHandle.standardError.write(Data("\(restored ? "Back to" : "Couldn't return to") \(describe(mode).lowercased())\n".utf8))
+    }
+    return result
+}
+
+func describe(_ mode: ScanMode?) -> String {
+    switch mode {
+    case .scanning: "Scanning"
+    case .hold(let channel): "Holding on channel \(channel)"
+    case nil: "Not on a memory channel (a menu, search, Close Call Only or weather)"
+    }
 }
 
 func isUniden(_ path: String) -> Bool {

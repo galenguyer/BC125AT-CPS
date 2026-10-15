@@ -5,6 +5,7 @@ import SwiftUI
 struct WriteSheet: View {
     var writer: ScannerWriter
     var write: () -> Void
+    @Environment(ScannerMonitor.self) private var monitor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -140,7 +141,7 @@ struct WriteSheet: View {
             .frame(minHeight: 120, maxHeight: 260)
             Text("Wrote \(report.written) of \(plan.steps.count). The document wasn't changed.").foregroundStyle(.secondary)
         }
-        Text("The scanner is now in Scan Hold. Press Scan on the scanner to start scanning again.")
+        Text(monitor.live.modeAfterUse)
         buttons {
             if let backup {
                 Button("Show Backup") { BackupStore.reveal(backup) }

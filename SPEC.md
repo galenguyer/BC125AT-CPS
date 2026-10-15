@@ -22,7 +22,7 @@ A native SwiftUI app for macOS that reads, edits, and writes the configuration o
 - Firmware updates.
 - RadioReference database lookup (a candidate for v2).
 - iOS or iPadOS. USB device access there needs DriverKit or MFi, which is out of scope for now.
-- Remote key presses or audio. (What the scanner is receiving, and its volume and squelch, *are* shown live; §3.7, §8.6.)
+- Audio, and general remote control. (What the scanner is receiving, its volume and squelch, and Scan, Hold and Listen *are* available; §3.7, §3.8, §8.6.)
 
 ## 2. Hardware & Connection
 
@@ -49,7 +49,7 @@ The transport is `USBTransport` in `BC125ATKit`; the USB calls are in a small C 
 >
 > **Source:** Uniden's *BC125AT Operation Specification*, Appendix C "PC programming Command" (pp. 54–63; a copy is in the bc125py repo at `docs/BC125AT_Protocol.pdf`), cross-checked against bc125py (MIT, commit `b9454ca`, 2026-01-03). Wherever the hardware disagreed with Uniden's document, the hardware wins, and the row says so.
 
-Commands marked **P** only work in program mode. Uniden's official list has exactly 24 commands, all in the table below. **`GLG` isn't on that list but works** (§3.7). `STS`, `KEY` and `PWR` haven't been tried.
+Commands marked **P** only work in program mode. Uniden's official list has exactly 24 commands, all in the table below. **`GLG`, `STS` and `KEY` aren't on that list but work** (§3.7, §3.8). `PWR` hasn't been tried.
 
 | Cmd | Mode | Get → response | Set | Notes |
 |---|---|---|---|---|
@@ -78,6 +78,8 @@ Commands marked **P** only work in program mode. Uniden's official list has exac
 | `CNT` | P | `CNT` → `CNT,lvl` | `CNT,lvl` | Contrast 1–15. **An out-of-range value gets `CNT,OK` but is ignored**: `CNT,20` left it at 8. Validation must catch it |
 | `VOL` | – | `VOL` → `VOL,lvl` | `VOL,lvl` | 0–15 |
 | `SQL` | – | `SQL` → `SQL,lvl` | `SQL,lvl` | `0` open · 1–14 · `15` closed |
+| `STS` | – | `STS` → `STS,011000,line1,,line2,,…` | – | Not in Uniden's list. The screen, line by line (e.g. `BANK3` / `SCAN` while scanning, the name and `CH133  127.6750` in hold), then status flags. Icons are custom glyphs that don't survive UTF-8 decoding. Unused by the app (§3.8) |
+| `KEY` | – | – | `KEY,key,P` → `KEY,OK` | Not in Uniden's list. Presses a key (§3.8) |
 
 Set commands reply `<CMD>,OK`.
 
@@ -205,6 +207,23 @@ Not in Uniden's BC125AT list, but tested on firmware 1.06.06: outside program mo
 
 Examples: `GLG,04625625,NFM,,82,,,TALKAROUND,1,0,,312,` while receiving; `GLG,01215000,AM,,0,,,GUARD,0,1,,1,` in Scan Hold. While scanning, the reply changes several times a second, and the fields can momentarily disagree (one channel's frequency with the next one's name), so a channel is only shown once the scanner stays on it. `VOL` and `SQL` also work outside program mode and take effect immediately.
 
+### 3.8 Scan and hold (`KEY`)
+`KEY,<key>,P` presses a key as a finger would. It isn't in Uniden's BC125AT list, but works outside program mode (tested 2026-10-14, firmware 1.06.06). Tried: `S` (Scan), `H` (Hold) and the digits. Uniden's other scanners also use `L` (L/O), `F` (Func), `E` (Pgm/E), `.` (Clr), `<`/`>` (scroll) and the modes `L` (long press), `H`/`R` (hold down, release); untried here. The scanner's behaviour, all tested:
+- **Scan** resumes scanning from hold, and does nothing while scanning.
+- **Hold is a toggle**: it holds while scanning and resumes scanning while held.
+- **Digits then Hold, while held**, jump to that channel in hold (typing `133`, Hold → channel 133).
+- **Digits while scanning turn banks on and off** (as on the keypad), so the app never types digits unless it has just made sure the scanner is held.
+- **`PRG`/`EPG` always leaves the scanner in hold on channel 1**, whatever it was doing before.
+
+Telling scanning from hold uses `GLG` (§3.7): while scanning, the channel changes several times a second; in hold it stays put. `ScannerSession.scanMode()` polls every 100 ms and decides after 1 s, or 3.5 s if a signal is open (scanning also stops on a transmission, and for the delay after it). If the scanner isn't on a memory channel (a menu, search, Close Call Only, weather), the mode is unknown and nothing is restored. A scan that stays stopped on a transmission for the whole window is taken for hold; the user then presses Scan once, as before this feature.
+
+`hold(on:)` presses **Scan, Hold, the digits, Hold**: Scan only ever leads to scanning and Hold then always holds, so the digits are typed in hold whatever the starting state. It then checks `GLG` reports that channel (an empty channel isn't reachable, so that returns false).
+
+The app uses this to:
+- **Keep the mode across reads and writes**: `LiveMonitor.withScanner` notes the mode before, and afterwards resumes scanning or holds on the same channel. The result sheets say which ("The scanner is scanning again." / "The scanner is back on hold on channel 131."). Release Scanner doesn't. `bc125at-cli read` and `write` do the same, and `bc125at-cli mode`, `scan` and `hold <channel>` expose it.
+- **Scan and Hold buttons** in the live bar (§8.6). Hold uses `hold(on:)` with the channel shown, not the Hold key, so it never toggles back to scanning.
+- **Listen on Scanner** in a channel's context menu: holds the scanner on that channel number.
+
 ## 4. Data Model
 
 These are plain `Codable`, `Sendable`, `Equatable` value types in a UI-free package:
@@ -298,12 +317,12 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, signed ad hoc **with the hardened runtime**, checks the signature and the four entitlements, builds a universal `bc125at-cli`, and writes `dist/BC125AT-CPS-<version>.zip`, `dist/bc125at-cli-<version>-macos.zip` and `SHA256SUMS-<version>.txt`. Setting `DEVELOPER_ID` and `NOTARY_PROFILE` switches to Developer ID signing and notarization (written but untested, since there's no account yet). Verified: a quarantined download is `rejected` by Gatekeeper, as the README's instructions expect, and the released app reads the scanner normally. `.github/workflows/release.yml` runs the same script on GitHub Actions when a tag like `v1.1.0` is pushed and attaches the zips to its release. Versions have three fields, and the tag must be `v` plus `MARKETING_VERSION`.
 
 ### 6.4 Building and testing
-- Kit and CLI: `cd BC125ATKit && swift test` runs the 78 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
+- Kit and CLI: `cd BC125ATKit && swift test` runs the 85 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
 - App: open `BC125AT CPS.xcodeproj`, or `xcodebuild -project "BC125AT CPS.xcodeproj" -scheme "BC125AT CPS" build`. It's ad-hoc signed ("Sign to Run Locally") with no team.
 
 ## 7. Sync Behavior
 
-1. **Read from Scanner** (⇧⌘R): checks `MDL` is BC125AT, runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. A progress sheet can cancel; the result says the scanner is in Scan Hold. On an untitled, unchanged document the read fills it directly; otherwise it asks before replacing. App-only bank names and notes are kept, and **one ⌘Z undoes the read**. SwiftUI registers that undo for changes made through the document binding, so the app must not register its own as well, or every read would take two ⌘Z presses. (SwiftUI's undo entry has no action name, so the menu says "Undo", not "Undo Read from Scanner".) The result opens as a new untitled document, or replaces the current one after a confirmation.
+1. **Read from Scanner** (⇧⌘R): checks `MDL` is BC125AT, runs `PRG`, reads every section, then `EPG`. If `PRG` returns `NG`, the app tells the user to leave the menu on the scanner and try again. This takes about 530 round trips, about 2 s on hardware. A progress sheet can cancel; afterwards the scanner goes back to scanning or to hold on its channel, and the result says which (§3.8). On an untitled, unchanged document the read fills it directly; otherwise it asks before replacing. App-only bank names and notes are kept, and **one ⌘Z undoes the read**. SwiftUI registers that undo for changes made through the document binding, so the app must not register its own as well, or every read would take two ⌘Z presses. (SwiftUI's undo entry has no action name, so the menu says "Undo", not "Undo Read from Scanner".) The result opens as a new untitled document, or replaces the current one after a confirmation.
 2. **Write to Scanner** (⇧⌘U):
    1. Validate the document. Any errors stop the write and list the problems.
    2. Read the scanner's current state; it's always read fresh. If nothing differs, the app says the scanner is up to date and writes nothing.
@@ -315,7 +334,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 3. **Never send `CLR`** except through an explicit "Factory Clear Scanner…" menu item that requires typing a confirmation.
 4. **Compare with Scanner** (⇧⌘D): reads the scanner and lists how it differs from the document, as the write review would, without writing. Works even when the document has errors.
 5. **Release Scanner** (menu item): sends `EPG` on its own, to recover a scanner left stuck in program mode by a crash or an unplugged cable. bc125py has the same feature, its `unlock` command.
-6. **After writing**, the scanner sits in Scan Hold (`EPG` doesn't resume scanning). The completion message tells the user to press Scan.
+6. **After writing**, the scanner goes back to what it was doing: scanning, or hold on the same channel (§3.8). `EPG` alone would leave it in hold on channel 1. The completion message says which.
 7. **Automatic backup**: every write first saves the scanner's previous state to `Application Support/BC125AT CPS/Backups/Scanner backup <date> at <time>.bc125at`, inside the app's sandbox container. If the backup can't be saved, nothing is written. The newest 50 are kept. Scanner ▸ Show Backups in Finder opens the folder.
 
 ## 8. User Interface
@@ -352,10 +371,12 @@ Backlight, key beep, key lock, contrast, battery charge time (with bc125py's sug
 A strip along the bottom of every document window (`LiveBar`, `LiveMonitor`):
 - **Now:** while a signal is open, or once the scanner has stayed on a channel for 0.6 s (hold, or the delay after a transmission), the channel number, name, frequency, modulation and tone, with a green dot while receiving. Otherwise "Scanning…".
 - **Last:** the most recent transmission and how long ago, so a short one isn't missed.
+- **Scan and Hold buttons** (§3.8): Scan resumes scanning; Hold stops on the channel shown.
 - **Volume and squelch sliders** that change the scanner immediately, and pick up changes made on the scanner itself.
+- When space is short, the channel's name is cut first, and "Last" is hidden rather than cut.
 - A pause button that stops polling (and frees the scanner for other programs, such as `bc125at-cli`).
 
-`LiveMonitor` is shared by all windows. It polls `GLG` every 200 ms and `VOL`/`SQL` every 2 s, and sends slider changes between polls. USB access is exclusive, so reading, writing, comparing and Release Scanner go through `LiveMonitor.withScanner`, which pauses polling, opens the scanner, and closes it before polling resumes.
+`LiveMonitor` is shared by all windows. It polls `GLG` every 200 ms and `VOL`/`SQL` every 2 s, and sends slider changes, Scan, Hold and Listen between polls. USB access is exclusive, so reading, writing, comparing and Release Scanner go through `LiveMonitor.withScanner`, which pauses polling, opens the scanner, and closes it before polling resumes.
 
 ### 8.7 Platform polish
 Light and dark mode, menu commands with keyboard shortcuts, and a Settings window (⌘,) for backup retention. App icon in `App/Sources/Assets.xcassets`, drawn by `scripts/make-icon.swift`.

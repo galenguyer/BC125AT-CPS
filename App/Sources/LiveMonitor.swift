@@ -1,13 +1,15 @@
 import BC125ATKit
 import Foundation
 import Observation
+import AppKit
 
 /// Watches what the scanner is receiving and controls its volume and squelch while it scans
 /// (SPEC.md §8.6). Shared by all windows; owned by `ScannerMonitor`.
 ///
 /// Opening the scanner over USB is exclusive, so this holds the connection only while polling.
 /// Reading, writing and Release Scanner call `pause` first, which stops polling and closes the
-/// connection, then `resume` when they're done.
+/// connection, then `resume` when they're done. The bar's Scan and Hold buttons, and Listen on a
+/// channel, are sent between polls (SPEC.md §3.8).
 @MainActor
 @Observable
 final class LiveMonitor {
@@ -34,6 +36,8 @@ final class LiveMonitor {
     private(set) var lastHeard: (status: LiveStatus, at: Date)?
     private(set) var volume: Int?
     private(set) var squelch: Int?
+    /// What the last read or write found the scanner doing, and whether it was put back.
+    private(set) var lastRestore: (mode: ScanMode, succeeded: Bool)?
 
     var enabled = UserDefaults.standard.object(forKey: "liveEnabled") as? Bool ?? true {
         didSet {
@@ -48,6 +52,7 @@ final class LiveMonitor {
     @ObservationIgnored private var pauses = 0
     @ObservationIgnored private var pendingVolume: Int?
     @ObservationIgnored private var pendingSquelch: Int?
+    @ObservationIgnored private var pendingAction: Action?
     @ObservationIgnored private var lastLevelChange = Date.distantPast
     @ObservationIgnored private var lastMove = Date.distantPast
 
@@ -79,6 +84,30 @@ final class LiveMonitor {
         lastLevelChange = .now
     }
 
+    private enum Action {
+        case scan
+        case hold(Int)
+    }
+
+    /// Resumes scanning, as the scanner's Scan key does.
+    func scan() { pendingAction = .scan }
+
+    /// Holds the scanner on `channel`, to listen to it.
+    func hold(on channel: Int) { pendingAction = .hold(channel) }
+
+    /// Scan, Hold and Listen work only while the bar is talking to the scanner.
+    var canControl: Bool { state == .live }
+
+    /// What to tell the user after a read or write about the mode the scanner was left in.
+    var modeAfterUse: String {
+        switch lastRestore {
+        case (.scanning, true)?: "The scanner is scanning again."
+        case (.hold(let channel), true)?: "The scanner is back on hold on channel \(channel)."
+        case (.hold(let channel), false)?: "The scanner is in Scan Hold. It couldn't go back to channel \(channel), where it was held."
+        default: "The scanner is now in Scan Hold. Press Scan on the scanner to start scanning again."
+        }
+    }
+
     /// Stops polling and releases the scanner until `resume()`. Calls can nest.
     func pause(_ reason: String) async {
         pauses += 1
@@ -91,18 +120,29 @@ final class LiveMonitor {
     }
 
     /// Runs `work` with the scanner to itself: pauses polling, opens a session, and closes it
-    /// before polling resumes. Every read, write and release goes through here.
-    func withScanner<T>(_ reason: String, device: USBScannerDevice,
+    /// before polling resumes. Every read, write and release goes through here. With
+    /// `keepingMode`, it first notes whether the scanner is scanning or held, and afterwards puts
+    /// it back, since program mode leaves it held on channel 1 (SPEC.md §3.8).
+    func withScanner<T>(_ reason: String, device: USBScannerDevice, keepingMode: Bool = true,
                         _ work: (ScannerSession) async throws -> T) async throws -> T {
         await pause(reason)
         defer { resume() }
         let session = try ScannerSession.open(locationID: device.locationID)
+        let mode = keepingMode ? (try? await session.scanMode()) ?? nil : nil
+        func finish() async {
+            if let mode {
+                lastRestore = (mode, (try? await session.restore(mode)) ?? false)
+            } else if keepingMode {
+                lastRestore = nil
+            }
+            await session.close()
+        }
         do {
             let result = try await work(session)
-            await session.close()
+            await finish()
             return result
         } catch {
-            await session.close()
+            await finish()
             throw error
         }
     }
@@ -147,6 +187,15 @@ final class LiveMonitor {
                 if let level = pendingSquelch {
                     pendingSquelch = nil
                     try await session.setSquelch(level)
+                }
+                if let action = pendingAction {
+                    pendingAction = nil
+                    switch action {
+                    case .scan: try await session.scan()
+                    case .hold(let channel):
+                        if try await !session.hold(on: channel) { NSSound.beep() }
+                    }
+                    lastMove = .now
                 }
                 apply(try await session.liveStatus())
                 // Pick up changes made on the scanner itself, but not while a slider is moving.

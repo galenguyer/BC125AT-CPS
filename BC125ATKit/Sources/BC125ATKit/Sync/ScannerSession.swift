@@ -62,7 +62,7 @@ public enum SessionError: Error, Equatable, CustomStringConvertible {
 /// than tying up threads in Swift's cooperative pool.
 public actor ScannerSession {
     private let queue = DispatchSerialQueue(label: "net.k9fgt.bc125at.session")
-    private let connection: ScannerConnection
+    let connection: ScannerConnection
 
     public nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
 

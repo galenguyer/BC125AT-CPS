@@ -13,7 +13,14 @@ struct LiveBar: View {
         HStack(spacing: 12) {
             nowPlaying
                 .frame(maxWidth: .infinity, alignment: .leading)
-            lastHeard
+                .layoutPriority(1)
+            // Shown only when it fits whole; a cut-down "Last: ROC… 1 min…" helps no one.
+            ViewThatFits(in: .horizontal) {
+                lastHeard
+                Color.clear.frame(width: 0, height: 0)
+            }
+            Divider().frame(height: 16)
+            scanControls
             Divider().frame(height: 16)
             levels
             Button(live.enabled ? "Pause Live View" : "Resume Live View",
@@ -64,20 +71,21 @@ struct LiveBar: View {
     /// `CH 312  TALKAROUND  462.5625 MHz  NFM  CTCSS 123.0`
     private func channel(_ status: LiveStatus, emphasised: Bool) -> some View {
         HStack(spacing: 6) {
+            // When space is short, only the name is cut; the numbers stay whole.
             if let number = status.channel {
-                Text("CH \(number)").monospacedDigit().foregroundStyle(.secondary)
+                Text("CH \(number)").monospacedDigit().foregroundStyle(.secondary).fixedSize()
             }
             if !status.name.isEmpty {
                 Text(status.name).fontWeight(emphasised ? .semibold : .regular)
             }
             if let frequency = status.frequency {
-                Text("\(frequency.megahertzString) MHz").monospacedDigit()
+                Text("\(frequency.megahertzString) MHz").monospacedDigit().fixedSize()
             }
             if let modulation = status.modulation {
-                Text(modulation.displayName).foregroundStyle(.secondary)
+                Text(modulation.displayName).foregroundStyle(.secondary).fixedSize()
             }
             if let tone = status.tone, tone != .none {
-                Text(tone.displayName).foregroundStyle(.secondary)
+                Text(tone.displayName).foregroundStyle(.secondary).fixedSize()
             }
         }
     }
@@ -92,9 +100,29 @@ struct LiveBar: View {
                 (Text(heard.at, style: .relative) + Text(" ago")).foregroundStyle(.secondary).monospacedDigit()
             }
             .lineLimit(1)
+            .fixedSize()
             .help(heard.status.frequency.map { "\($0.megahertzString) MHz" } ?? "")
             .accessibilityElement(children: .combine)
         }
+    }
+
+    // MARK: Scan and Hold
+
+    /// Scan resumes scanning; Hold stops on the channel shown (SPEC.md §3.8). Hold goes through
+    /// `hold(on:)` rather than the scanner's Hold key, which is a toggle.
+    private var scanControls: some View {
+        HStack(spacing: 2) {
+            Button("Scan", systemImage: "play.fill") { live.scan() }
+                .help("Resume scanning, as the scanner's Scan key does")
+            Button("Hold", systemImage: "pause.fill") {
+                if let channel = live.status?.channel { live.hold(on: channel) }
+            }
+            .help("Stop on the channel shown")
+            .disabled(live.status?.channel == nil)
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .disabled(!live.canControl)
     }
 
     // MARK: Volume and squelch

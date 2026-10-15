@@ -442,6 +442,7 @@ extension ValidationIssue.Location {
 
 struct ReadProgressSheet: View {
     var reader: ScannerReader
+    @Environment(ScannerMonitor.self) private var monitor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -465,7 +466,7 @@ struct ReadProgressSheet: View {
                 if let firmware = config.metadata.firmware {
                     Text("\(config.metadata.model ?? "BC125AT"), \(firmware)").foregroundStyle(.secondary)
                 }
-                Text("The scanner is now in Scan Hold. Press Scan on the scanner to start scanning again.")
+                Text(monitor.live.modeAfterUse)
                 HStack {
                     Spacer()
                     Button("Done") { reader.dismiss() }

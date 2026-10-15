@@ -35,6 +35,14 @@ public final class MockScanner: LineTransport, Sendable {
         get { engine.withLock { $0.unresponsiveCommands } }
         set { engine.withLock { $0.unresponsiveCommands = newValue } }
     }
+    /// Simulates scanning and Scan Hold for `GLG` and `KEY` (SPEC.md §3.8): while scanning, each
+    /// `GLG` reports the next used channel; Hold, Scan and the number keys act as on the scanner,
+    /// including number keys toggling banks while scanning; `EPG` leaves it held on channel 1.
+    /// `nil` (the default) keeps `GLG` replying with `glgFields`.
+    public var scanMode: ScanMode? {
+        get { engine.withLock { $0.scanMode } }
+        set { engine.withLock { $0.scanMode = newValue } }
+    }
     /// The raw `GLG` reply fields (after the command name), as a scanning scanner would report.
     public var glgFields: [String] {
         get { engine.withLock { $0.glgFields } }
@@ -79,6 +87,9 @@ private struct Engine {
     var replies: [String] = []
     var lockoutCursor = 0
     var glgFields = Array(repeating: "", count: 12)
+    var scanMode: ScanMode?
+    var scanCursor = 0
+    var typed = ""
 
     init(config: ScannerConfig, bandPlanOverride: BandPlan?) {
         self.config = config
@@ -105,6 +116,7 @@ private struct Engine {
             return ok()
         case "EPG":
             inProgramMode = false
+            if scanMode != nil { scanMode = .hold(channel: 1) }
             return ok()
         case "BLT":
             if isGet { return "BLT,\(config.settings.backlight.rawValue)" }
@@ -179,7 +191,47 @@ private struct Engine {
             if SystemSettings.contrastRange.contains(value) { config.settings.contrast = value }
             return ok()
         case "GLG":
-            return (["GLG"] + glgFields).joined(separator: ",")
+            guard let mode = scanMode else { return (["GLG"] + glgFields).joined(separator: ",") }
+            switch mode {
+            case .hold(let channel): return glg(channel)
+            case .scanning:
+                let used = (1...ScannerConfig.channelCount).filter { !config[channel: $0].isEmpty }
+                guard !used.isEmpty else { return "GLG,,,,,,,,0,1,,," }
+                scanCursor = (scanCursor + 1) % used.count
+                return glg(used[scanCursor])
+            }
+        case "KEY":
+            if inProgramMode { return "KEY,NG" }
+            guard arguments.count == 2, arguments[1] == "P", let mode = scanMode else { return err() }
+            switch arguments[0] {
+            case "S":
+                self.scanMode = .scanning
+                typed = ""
+            case "H":
+                switch mode {
+                case .scanning:
+                    let used = (1...ScannerConfig.channelCount).filter { !config[channel: $0].isEmpty }
+                    self.scanMode = .hold(channel: used.isEmpty ? 1 : used[scanCursor % used.count])
+                case .hold:
+                    if let channel = Int(typed), (1...ScannerConfig.channelCount).contains(channel), !config[channel: channel].isEmpty {
+                        self.scanMode = .hold(channel: channel)
+                    } else if typed.isEmpty {
+                        self.scanMode = .scanning
+                    }
+                    typed = ""
+                }
+            case let digit where digit.count == 1 && digit.first!.isNumber:
+                if case .scanning = mode {
+                    // While scanning, a number key turns its bank (0 = 10) on or off.
+                    let bank = Int(digit)! == 0 ? 10 : Int(digit)!
+                    config.bankScanEnabled[bank - 1].toggle()
+                } else {
+                    typed += digit
+                }
+            default:
+                return err()
+            }
+            return ok()
         case "VOL", "SQL":
             let current = command == "VOL" ? config.settings.volume : config.settings.squelch
             if isGet { return "\(command),\(current)" }
@@ -215,6 +267,13 @@ private struct Engine {
         default:
             return "ERR"
         }
+    }
+
+    /// A `GLG` reply for sitting on `channel`.
+    func glg(_ channel: Int) -> String {
+        let c = config[channel: channel]
+        // The scanner never stores commas in names; test data sometimes has them.
+        return "GLG,\(c.frequency?.wireValue ?? ""),\(c.modulation.rawValue),,0,,,\(c.name.replacing(",", with: " ")),0,1,,\(channel),"
     }
 
     mutating func mask(_ command: String, arguments: [String]) -> String {

@@ -24,6 +24,9 @@ struct ChannelTable: NSViewRepresentable {
     /// Identifies which channels are shown (All Channels or a bank); when it changes, the table
     /// scrolls back to the top.
     var scope: Int
+    /// Holds the scanner on a channel, for the context menu's Listen on Scanner; `nil` while the
+    /// scanner can't be controlled.
+    var listen: ((Int) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -761,6 +764,10 @@ extension ChannelTable {
             menuNumbers = numbers.sorted()
             let used = menuNumbers.filter { !config[channel: $0].isEmpty }
 
+            if numbers.count == 1, used.count == 1, parent.listen != nil {
+                menu.addItem(item("Listen on Scanner", #selector(menuListen(_:))))
+                menu.addItem(.separator())
+            }
             menu.addItem(item("Copy", #selector(menuCopy(_:))))
             menu.addItem(item(numbers.count == 1 ? "Clear Channel" : "Clear \(numbers.count) Channels", #selector(menuClear(_:))))
             guard !used.isEmpty else { return }
@@ -798,6 +805,10 @@ extension ChannelTable {
         /// Bulk edits skip empty channels.
         private var menuUsed: [Int] { menuNumbers.filter { !config[channel: $0].isEmpty } }
 
+        @objc private func menuListen(_ sender: NSMenuItem) {
+            guard let number = menuNumbers.first else { return }
+            parent.listen?(number)
+        }
         @objc private func menuCopy(_ sender: NSMenuItem) { copy(menuNumbers) }
         @objc private func menuClear(_ sender: NSMenuItem) { clear(menuNumbers) }
         @objc private func menuModulation(_ sender: NSMenuItem) {
