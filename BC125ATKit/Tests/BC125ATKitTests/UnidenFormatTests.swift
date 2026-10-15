@@ -102,11 +102,4 @@ import Testing
             try UnidenFormat.decode(Data("C-Freq\t1\tX\t121500000\tAM\tOff\tOff\t2\tOff\r\n".utf8))
         }
     }
-
-    @Test func warnsAboutTheCanadaBandPlan() {
-        var config = ScannerConfig()
-        #expect(!config.validate().contains { $0.message.contains("Canada") })
-        config.settings.bandPlan = .canada
-        #expect(config.validate().contains { $0.severity == .warning && $0.message.contains("Canada") })
-    }
 }

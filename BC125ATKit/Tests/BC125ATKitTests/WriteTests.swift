@@ -115,28 +115,39 @@ import Testing
         #expect(mock.config[channel: 2].frequency == Frequency(parsing: "162.55"))
     }
 
-    /// On the Canada band plan the app can't predict snapping, so it writes frequencies as
-    /// entered and reports what the scanner stored instead of calling it a failure.
-    @Test func canadaPlanWritesAsEnteredAndReportsWhatWasStored() async throws {
-        let mock = MockScanner() // snaps to its own plan, which the document doesn't know
+    /// On the Canada band plan, frequencies are predicted with the Canada table, and the scanner
+    /// switches plans before any channel is written.
+    @Test func canadaPlanPredictsWithTheCanadaTable() async throws {
+        let mock = MockScanner()
         let session = ScannerSession(transport: mock)
         var document = ScannerConfig()
         document.settings.bandPlan = .canada
         document[channel: 1] = Channel(name: "Off plan", frequency: Frequency(parsing: "154.0062"), modulation: .nfm)
-        document[channel: 2] = Channel(frequency: Frequency(parsing: "162.55"))
 
-        let issues = document.validate()
-        #expect(issues.contains { $0.location == .channel(1) && $0.severity == .warning && $0.message.contains("Canada") })
-        #expect(!issues.contains { $0.message.contains("will be stored as") })
-
+        #expect(document.validate().contains { $0.location == .channel(1) && $0.message.contains("stored as 154.0050") })
         let plan = WritePlan(from: ScannerConfig(), to: document)
-        #expect(plan.adjustments.isEmpty)
-        #expect(plan.target[channel: 1].frequency == Frequency(parsing: "154.0062"))
+        #expect(plan.steps.map(\.command).first == "BPL,1")
+        #expect(plan.target[channel: 1].frequency == Frequency(parsing: "154.0050"))
 
         let report = try await session.write(plan)
         #expect(report.succeeded)
-        #expect(report.storedDifferently == [.init(title: "Channel 1", detail: "154.0062 MHz was stored as 154.0025 MHz")])
-        #expect(report.acceptedConfig[channel: 1].frequency == Frequency(parsing: "154.0025"))
+        #expect(report.storedDifferently.isEmpty)
+        #expect(mock.config[channel: 1].frequency == Frequency(parsing: "154.0050"))
+    }
+
+    /// Where the scanner stores a frequency differently than predicted, the write reports what it
+    /// stored instead of calling it a failure.
+    @Test func reportsFrequenciesStoredDifferentlyThanPredicted() async throws {
+        let mock = MockScanner(bandPlan: .canada) // a scanner that doesn't follow the USA table
+        let session = ScannerSession(transport: mock)
+        var document = ScannerConfig()
+        document[channel: 1] = Channel(name: "Off plan", frequency: Frequency(parsing: "162.5475"), modulation: .nfm)
+        document[channel: 2] = Channel(frequency: Frequency(parsing: "162.55"))
+
+        let report = try await session.write(WritePlan(from: ScannerConfig(), to: document))
+        #expect(report.succeeded)
+        #expect(report.storedDifferently == [.init(title: "Channel 1", detail: "162.5475 MHz was stored as 162.5500 MHz")])
+        #expect(report.acceptedConfig[channel: 1].frequency == Frequency(parsing: "162.5500"))
         #expect(report.acceptedConfig[channel: 1].name == "Off plan")
         #expect(report.acceptedConfig[channel: 2] == document[channel: 2])
     }

@@ -63,11 +63,6 @@ extension ScannerConfig {
             for issue in channel.validate(bandPlan: bandPlan) {
                 add(issue.severity, .channel(offset + 1), issue.message)
             }
-            // The Canada plan hasn't been measured. Being off the USA plan is only a hint.
-            if settings.bandPlan == .canada, let frequency = channel.frequency,
-               let usa = BandPlan.bc125at.storedValue(for: frequency), usa != frequency {
-                add(.warning, .channel(offset + 1), "\(frequency) MHz isn't on the USA channel plan, so it may not be on the Canada plan either. The scanner may store a nearby frequency; you'll see what it stored after writing")
-            }
             if let duplicate = duplicates[offset + 1] {
                 add(.warning, .channel(offset + 1), duplicate)
             }
@@ -98,9 +93,6 @@ extension ScannerConfig {
         if !SystemSettings.levelRange.contains(settings.squelch) {
             add(.error, .settings, "Squelch must be 0–15")
         }
-        if settings.bandPlan == .canada {
-            add(.warning, .settings, "The band plan is Canada, which BC125AT CPS can't check frequencies against. Frequencies are written as entered, and any the scanner stores differently are shown after writing")
-        }
 
         if !search.serviceGroupsEnabled.contains(true) {
             add(.warning, .search, "Every service search group is disabled")
@@ -127,7 +119,7 @@ extension ScannerConfig {
 
 extension Channel {
     /// Problems with this channel on its own (bank-level rules are in `ScannerConfig.validate`).
-    public func validate(bandPlan: BandPlan = .bc125at) -> [(severity: ValidationIssue.Severity, message: String)] {
+    public func validate(bandPlan: BandPlan = .usa) -> [(severity: ValidationIssue.Severity, message: String)] {
         var issues: [(ValidationIssue.Severity, String)] = []
         if name.count > Self.maxNameLength {
             issues.append((.error, "Name is \(name.count) characters; the scanner keeps \(Self.maxNameLength)"))

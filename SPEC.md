@@ -150,9 +150,11 @@ The rules, measured on firmware 1.06.06:
 | 25.0000–54.0000 | 5 kHz | |
 | 108.0000–137.0000 | 8.33 kHz | Air band |
 | 137.0000–150.7750 | 5 kHz | |
-| 150.7750–174.0000 | mostly 7.5 kHz, then 12.5 kHz from 163.25 | about 20 segments, each with its own starting point, following FCC channel plans. Examples: the 154.45625–154.47875 offset channels, 5 kHz runs at 154.515–154.525 and 157.450–157.470, and lone channels 173.20375 and 173.39625. The full table is `phase0/band-plan.json` |
+| 150.7750–174.0000 | mostly 7.5 kHz, then 12.5 kHz from 163.25 | about 20 segments, each with its own starting point, following FCC channel plans. Examples: the 154.45625–154.47875 offset channels, 5 kHz runs at 154.515–154.525 and 157.450–157.470, and lone channels 173.20375 and 173.39625. The full table is in the owner's manual ("USA Band Plan", p. 14) and `BandPlan.usa` |
 | 225.0000–380.0000 | 12.5 kHz | |
 | 400.0000–512.0000 | 6.25 kHz | |
+
+**The owner's manual has the same table** ("USA Band Plan", p. 14; `https://www.uniden.info/download/ompdf/BC125ATom.pdf`). It was found after the measurements, and the two agree point for point: both give the same 44,967 channels (compared on 2026-10-14). The manual prints frequencies to 100 Hz, so it shows 154.45625, 173.20375 and 173.39625 as 154.4562, 173.2037 and 173.3962, and 136.99167 as 136.9916. It splits a few ranges differently from `phase0/band-plan.json` (25–27.995 and 28–54 MHz; 173.20375–173.210 at 6.25 kHz then 173.215–173.220 at 5 kHz) without changing the points. The manual says nothing about rules 2 and 3 above; those come only from the measurements. `BandPlan.usa` is now written from the manual's rows.
 
 **How it was measured, and how sure we are:**
 
@@ -165,12 +167,12 @@ The rules, measured on firmware 1.06.06:
 
 In the sampled bands, an undiscovered irregular segment is possible but unlikely. If one exists, read-back (§7) catches it.
 
-**Band plan region.** All of the above is the scanner's **USA** band plan. The scanner also has a **Canada** plan, chosen by holding **1** (USA) or **2** (Canada) while powering on; per RadioReference users it uses 5 kHz in 25–54 MHz, 8.33 kHz for air and 6.25 kHz in 400–512 MHz, but it hasn't been measured here. It's read and set with `BPL` (program mode only; `BPL,NG` outside it), which is in Uniden's protocol document (V1.01, p. 58) but was missed at first. The document says to "issue this command before frequency programming". Switching with `BPL` takes effect at once and doesn't change anything else: tested USA → Canada → USA on 2026-10-14, every other reply in a full dump was unchanged, including the 500 channels (frequencies already stored aren't re-snapped) and weather priority. Tested earlier: after Uniden's software wrote a file set to Canada, off-plan VHF-high writes snapped to a 5 kHz grid (154.0062 → 154.0050, 155.0012 → 155.0000, 165.0030 → 165.0050) instead of the USA table's 154.0025, 155.0025 and 165.0000, while 137–150.775, 225–380 and 25–54 MHz behaved as in the USA plan. The app treats it as an ordinary setting (`SystemSettings.bandPlan`): read with the other settings, editable in Settings, and written first, before any channel, since it changes how the scanner stores their frequencies. Documents saved before it was read have no band plan and open as USA.
+**Band plan region.** All of the above is the scanner's **USA** band plan. The scanner also has a **Canada** plan, chosen by holding **1** (USA) or **2** (Canada) while powering on; the owner's manual ("Canada Band Plan", p. 15) gives the same steps as USA except a plain **5 kHz grid across 137–174 MHz**. That's `BandPlan.canada`. It's read and set with `BPL` (program mode only; `BPL,NG` outside it), which is in Uniden's protocol document (V1.01, p. 58) but was missed at first. The document says to "issue this command before frequency programming". Switching with `BPL` takes effect at once and doesn't change anything else: tested USA → Canada → USA on 2026-10-14, every other reply in a full dump was unchanged, including the 500 channels (frequencies already stored aren't re-snapped) and weather priority. Tested earlier: after Uniden's software wrote a file set to Canada, off-plan VHF-high writes snapped to a 5 kHz grid (154.0062 → 154.0050, 155.0012 → 155.0000, 165.0030 → 165.0050) instead of the USA table's 154.0025, 155.0025 and 165.0000, while 137–150.775, 225–380 and 25–54 MHz behaved as in the USA plan. The app treats it as an ordinary setting (`SystemSettings.bandPlan`): read with the other settings, editable in Settings, and written first, before any channel, since it changes how the scanner stores their frequencies. Documents saved before it was read have no band plan and open as USA.
 
-**On the Canada plan** the app can't predict snapping. `ScannerConfig.channelPlan` is then `BandPlan.rangesOnly`, which checks only the frequency ranges: frequencies are written as entered, with a warning on any that are off the USA plan (a hint that they may be off the Canada one too), and after writing the app reports what the scanner stored (§7).
+**On the Canada plan**, `ScannerConfig.channelPlan` is `BandPlan.canada`, so the app predicts snapping just as on USA. That table is the manual's, with only the spot checks above on hardware (all consistent with it), so if the scanner stores something else, the write reports it (§7) instead of failing.
 
 **How the app uses this:**
-- `BandPlan` in `BC125ATKit` carries the table and predicts what the scanner will store for any frequency.
+- `BandPlan` in `BC125ATKit` carries both tables and predicts what the scanner will store for any frequency.
 - The channel editor shows the predicted value and warns *before* writing ("154.0062 will be stored as 154.0025").
 - Every write is still read back (§7). If the stored value doesn't match the prediction, the result reports it.
 
@@ -296,7 +298,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, signed ad hoc **with the hardened runtime**, checks the signature and the four entitlements, builds a universal `bc125at-cli`, and writes `dist/BC125AT-CPS-<version>.zip`, `dist/bc125at-cli-<version>-macos.zip` and `SHA256SUMS-<version>.txt`. Setting `DEVELOPER_ID` and `NOTARY_PROFILE` switches to Developer ID signing and notarization (written but untested, since there's no account yet). Verified: a quarantined download is `rejected` by Gatekeeper, as the README's instructions expect, and the released app reads the scanner normally. `.github/workflows/release.yml` runs the same script on GitHub Actions when a tag like `v1.1.0` is pushed and attaches the zips to its release. Versions have three fields, and the tag must be `v` plus `MARKETING_VERSION`.
 
 ### 6.4 Building and testing
-- Kit and CLI: `cd BC125ATKit && swift test` runs the 76 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
+- Kit and CLI: `cd BC125ATKit && swift test` runs the 78 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
 - App: open `BC125AT CPS.xcodeproj`, or `xcodebuild -project "BC125AT CPS.xcodeproj" -scheme "BC125AT CPS" build`. It's ad-hoc signed ("Sign to Run Locally") with no team.
 
 ## 7. Sync Behavior
@@ -393,5 +395,5 @@ Light and dark mode, menu commands with keyboard shortcuts, and a Settings windo
 | Protocol source | Uniden Operation Spec Appendix C, cross-checked with bc125py (§3) |
 
 ## 12. Open Questions
-1. The Canada plan's channel steps are only spot-checked (5 kHz in 150–174 MHz at four points); measuring them fully, as was done for the USA plan, would let the app predict snapping on the Canada plan too.
+1. The Canada table is the manual's, spot-checked at four points in 150–174 MHz. A gap test of 137–174 MHz on Canada (about 7,400 writes) would confirm it, but isn't planned since the Canada plan isn't used here.
 2. Should the app also accept the BC126AT, the international version? bc125py looks for it by name, and it probably uses the same protocol. If yes, accept `MDL,BC126AT` and check whether its frequency ranges differ.

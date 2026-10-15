@@ -71,7 +71,7 @@ import Testing
             let parts = line.split(separator: ",")
             let sent = Frequency(hundredHz: UInt32(parts[0])!)
             let expected = parts[1] == "ERR" ? nil : Frequency(hundredHz: UInt32(parts[1])!)
-            let predicted = BandPlan.bc125at.storedValue(for: sent)
+            let predicted = BandPlan.usa.storedValue(for: sent)
             if predicted != expected { failures.append("\(sent) → expected \(expected?.description ?? "ERR"), predicted \(predicted?.description ?? "ERR")") }
         }
         #expect(lines.count > 19_000)
@@ -79,7 +79,7 @@ import Testing
     }
 
     @Test func rangesAndExamples() {
-        let plan = BandPlan.bc125at
+        let plan = BandPlan.usa
         func stored(_ mhz: String) -> String? { plan.storedValue(for: Frequency(parsing: mhz)!)?.megahertzString }
         #expect(stored("162.5510") == "162.5475")
         #expect(stored("162.5050") == "162.5050") // exact 5 kHz kept in 137–174 MHz
@@ -90,6 +90,19 @@ import Testing
         #expect(stored("512.01") == nil)
         #expect(stored("60") == nil)
         #expect(stored("24.9995") == nil)
+    }
+
+    /// The Canada table, and the values measured on a scanner set to Canada (SPEC.md §3.5).
+    @Test func canada() {
+        func stored(_ mhz: String) -> String? { BandPlan.canada.storedValue(for: Frequency(parsing: mhz)!)?.megahertzString }
+        #expect(stored("154.0062") == "154.0050")
+        #expect(stored("155.0012") == "155.0000")
+        #expect(stored("165.0030") == "165.0050")
+        #expect(stored("162.5475") == "162.5500") // a USA 7.5 kHz channel, a tie on the 5 kHz grid
+        #expect(stored("173.2037") == "173.2050")
+        #expect(stored("118.0050") == "118.0083")
+        #expect(stored("406.0050") == "406.0062")
+        #expect(stored("60") == nil)
     }
 }
 

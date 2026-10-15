@@ -8,8 +8,9 @@ import Synchronization
 public final class MockScanner: LineTransport, Sendable {
     private let engine: Mutex<Engine>
 
-    public init(config: ScannerConfig = .init(), bandPlan: BandPlan = .bc125at) {
-        engine = Mutex(Engine(config: config, bandPlan: bandPlan))
+    /// Snaps frequencies to `bandPlan`, or to the plan for its current band plan setting if nil.
+    public init(config: ScannerConfig = .init(), bandPlan: BandPlan? = nil) {
+        engine = Mutex(Engine(config: config, bandPlanOverride: bandPlan))
     }
 
     public var config: ScannerConfig {
@@ -67,7 +68,8 @@ public final class MockScanner: LineTransport, Sendable {
 /// The scanner's state and command handling, guarded by `MockScanner`'s mutex.
 private struct Engine {
     var config: ScannerConfig
-    let bandPlan: BandPlan
+    let bandPlanOverride: BandPlan?
+    var bandPlan: BandPlan { bandPlanOverride ?? config.channelPlan }
     var model = "BC125AT"
     var firmware = "Version 1.06.06"
     var inProgramMode = false
@@ -78,9 +80,9 @@ private struct Engine {
     var lockoutCursor = 0
     var glgFields = Array(repeating: "", count: 12)
 
-    init(config: ScannerConfig, bandPlan: BandPlan) {
+    init(config: ScannerConfig, bandPlanOverride: BandPlan?) {
         self.config = config
-        self.bandPlan = bandPlan
+        self.bandPlanOverride = bandPlanOverride
     }
 
     private static let programModeOnly: Set<String> = [

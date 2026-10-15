@@ -61,9 +61,8 @@ public struct ScannerConfig: Hashable, Sendable {
 
     public var usedChannelCount: Int { channels.count { !$0.isEmpty } }
 
-    /// The channel plan to predict stored frequencies with: the measured USA plan, or only the
-    /// frequency ranges on the unmeasured Canada plan.
-    public var channelPlan: BandPlan { settings.bandPlan == .canada ? .rangesOnly : .bc125at }
+    /// The channel plan to predict stored frequencies with, for this configuration's band plan.
+    public var channelPlan: BandPlan { settings.bandPlan == .canada ? .canada : .usa }
 
     public func usedChannelCount(inBank bank: Int) -> Int {
         Channel.channels(inBank: bank).count { !self[channel: $0].isEmpty }

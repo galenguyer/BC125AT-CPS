@@ -260,7 +260,7 @@ struct DocumentView: View {
                 message += "\n\nUniden's files have no global lockouts, so this document's \(current.globalLockouts.count) were kept."
             }
             if imported.settings.bandPlan == .canada {
-                message += "\n\nThe file sets the band plan to Canada, so writing it will switch the scanner to Canada. Frequencies can't be checked against the Canada plan, so some may be stored differently than shown."
+                message += "\n\nThe file sets the band plan to Canada, so writing it will switch the scanner to Canada."
             }
             importSummary = ("Uniden File Imported", message)
         } catch let error as UnidenFormat.ImportError {

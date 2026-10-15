@@ -8,14 +8,6 @@ struct SettingsView: View {
     @Binding var config: ScannerConfig
     var issues: [ValidationIssue]
 
-    private var bandPlanNote: String {
-        var note = "The band plan sets the channel steps the scanner rounds frequencies to (SPEC.md §3.5)."
-        if config.settings.bandPlan == .canada {
-            note += " Frequencies can't be checked against the Canada plan, so they're written as entered and any the scanner stores differently are shown after writing."
-        }
-        return note
-    }
-
     var body: some View {
         Form {
             IssuesSection(issues: issues.filter { $0.location == .settings || $0.location == .bank(1) })
@@ -46,7 +38,7 @@ struct SettingsView: View {
             } header: {
                 Text("Scanning")
             } footer: {
-                Text(bandPlanNote).foregroundStyle(.secondary)
+                Text("The band plan sets the channel steps the scanner rounds frequencies to. Canada uses 5 kHz steps in 137–174 MHz.").foregroundStyle(.secondary)
             }
             Section {
                 Stepper("Charge Time: \(config.settings.batteryChargeHours) hours", value: $config.settings.batteryChargeHours,

@@ -2,7 +2,8 @@ import Foundation
 
 /// Which frequencies the scanner accepts, and where it moves the ones that are off its channel plan.
 ///
-/// Measured on a BC125AT running firmware 1.06.06 (SPEC.md §3.5, `phase0/band-plan.json`):
+/// The tables are the owner's manual's; the rules were measured on a BC125AT running firmware 1.06.06
+/// (SPEC.md §3.5):
 /// 1. Valid points are `start + n × step` within a segment, truncated to 100 Hz.
 /// 2. Any other in-range frequency is stored as the nearest valid point (compared after
 ///    truncation), with exact ties rounding up.
@@ -74,39 +75,67 @@ public struct BandPlan: Sendable {
         return best.map { Frequency(hundredHz: UInt32($0)) }
     }
 
-    /// For a scanner set to the Canada band plan, which hasn't been measured (SPEC.md §3.5). Only
-    /// the scanner's frequency ranges are known, so every in-range frequency is predicted to be
-    /// stored as sent; what the scanner actually stores is reported after writing.
-    public static let rangesOnly = BandPlan(ranges: bc125at.ranges, segments: [], keepsExact5kHz: [])
+    /// Only the scanner's frequency ranges, with every in-range frequency predicted to be stored
+    /// as sent. For comparing against values that are already as stored.
+    public static let rangesOnly = BandPlan(ranges: usa.ranges, segments: [], keepsExact5kHz: [])
 
-    /// The BC125AT's measured plan, for the USA band plan region (SPEC.md §3.5).
-    public static let bc125at = BandPlan(
-        ranges: [250_000...540_000, 1_080_000...1_740_000, 2_250_000...3_800_000, 4_000_000...5_120_000],
+    private static let ranges: [ClosedRange<UInt32>] = [250_000...540_000, 1_080_000...1_740_000, 2_250_000...3_800_000, 4_000_000...5_120_000]
+
+    /// One row of a band plan table in the owner's manual, in hertz. The manual prints frequencies
+    /// to 100 Hz, so a few are written out here in full: 136.99167 (printed 136.9916), 154.45625
+    /// (154.4562), 173.20375 (173.2037) and 173.39625 (173.3962).
+    private static func row(_ lower: Int, _ upper: Int, _ step: Int) -> Segment {
+        step == 8_333 ? Segment(start: lower, end: upper, stepNumerator: 25_000, stepDenominator: 3) : Segment(start: lower, end: upper, step: step)
+    }
+
+    /// The USA band plan, from the table in the owner's manual ("USA Band Plan", p. 14).
+    ///
+    /// Checked against Phase 0's measurements (SPEC.md §3.5, `phase0/band-plan.json`): both give the
+    /// same 44,967 points. The manual doesn't give the snapping rules or the 137–174 MHz
+    /// exact-5 kHz exception; those were measured.
+    public static let usa = BandPlan(
+        ranges: ranges,
         segments: [
-            .init(start: 25_000_000, end: 54_000_000, step: 5_000),
-            .init(start: 108_000_000, end: 137_000_000, stepNumerator: 25_000, stepDenominator: 3),
-            .init(start: 137_000_000, end: 150_775_000, step: 5_000),
-            .init(start: 150_775_000, end: 150_812_500, step: 7_500),
-            .init(start: 150_815_000, end: 154_452_500, step: 7_500),
-            .init(start: 154_456_250, end: 154_478_750, step: 7_500),
-            .init(start: 154_482_500, end: 154_512_500, step: 7_500),
-            .init(start: 154_515_000, end: 154_525_000, step: 5_000),
-            .init(start: 154_527_500, end: 154_535_000, step: 7_500),
-            .init(start: 154_540_000, end: 154_607_500, step: 7_500),
-            .init(start: 154_610_000, end: 154_647_500, step: 7_500),
-            .init(start: 154_650_000, end: 157_447_500, step: 7_500),
-            .init(start: 157_450_000, end: 157_470_000, step: 5_000),
-            .init(start: 157_470_000, end: 163_245_000, step: 7_500),
-            .init(start: 163_250_000, end: 173_200_000, step: 12_500),
-            .init(start: 173_203_750, end: 173_203_750, step: 0),
-            .init(start: 173_210_000, end: 173_225_000, step: 5_000),
-            .init(start: 173_225_000, end: 173_387_500, step: 12_500),
-            .init(start: 173_390_000, end: 173_390_000, step: 0),
-            .init(start: 173_396_250, end: 173_396_250, step: 0),
-            .init(start: 173_400_000, end: 174_000_000, step: 5_000),
-            .init(start: 225_000_000, end: 380_000_000, step: 12_500),
-            .init(start: 400_000_000, end: 512_000_000, step: 6_250),
+            row(25_000_000, 27_995_000, 5_000),
+            row(28_000_000, 54_000_000, 5_000),
+            row(108_000_000, 136_991_667, 8_333),
+            row(137_000_000, 150_770_000, 5_000),
+            row(150_775_000, 150_812_500, 7_500),
+            row(150_815_000, 154_452_500, 7_500),
+            row(154_456_250, 154_478_750, 7_500),
+            row(154_482_500, 154_512_500, 7_500),
+            row(154_515_000, 154_525_000, 5_000),
+            row(154_527_500, 154_535_000, 7_500),
+            row(154_540_000, 154_607_500, 7_500),
+            row(154_610_000, 154_647_500, 7_500),
+            row(154_650_000, 157_447_500, 7_500),
+            row(157_450_000, 157_465_000, 5_000),
+            row(157_470_000, 163_245_000, 7_500),
+            row(163_250_000, 173_200_000, 12_500),
+            row(173_203_750, 173_210_000, 6_250),
+            row(173_215_000, 173_220_000, 5_000),
+            row(173_225_000, 173_387_500, 12_500),
+            row(173_390_000, 173_396_250, 6_250),
+            row(173_400_000, 174_000_000, 5_000),
+            row(225_000_000, 380_000_000, 12_500),
+            row(400_000_000, 512_000_000, 6_250),
         ],
         keepsExact5kHz: [1_370_000...1_740_000]
+    )
+
+    /// The Canada band plan, from the table in the owner's manual ("Canada Band Plan", p. 15): the
+    /// USA plan with a plain 5 kHz grid in 137–174 MHz. Spot-checked on hardware at four points in
+    /// 150–174 MHz, and in 25–54, 137–150.775 and 225–380 MHz (SPEC.md §3.5).
+    public static let canada = BandPlan(
+        ranges: ranges,
+        segments: [
+            row(25_000_000, 27_995_000, 5_000),
+            row(28_000_000, 54_000_000, 5_000),
+            row(108_000_000, 136_991_667, 8_333),
+            row(137_000_000, 174_000_000, 5_000),
+            row(225_000_000, 380_000_000, 12_500),
+            row(400_000_000, 512_000_000, 6_250),
+        ],
+        keepsExact5kHz: []
     )
 }

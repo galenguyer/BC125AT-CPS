@@ -33,8 +33,8 @@ public struct WriteReport: Sendable {
     public var mismatches: [WritePlan.Step]
     /// The scanner's configuration as read back after writing.
     public var scannerConfig: ScannerConfig
-    /// Channels whose frequency the scanner stored differently than predicted (always possible on
-    /// the unmeasured Canada band plan). These aren't failures: the scanner snapped the value to
+    /// Channels whose frequency the scanner stored differently than predicted (possible where the
+    /// plan was only sampled or spot-checked, SPEC.md §3.5). These aren't failures: the scanner snapped the value to
     /// its own plan, and `acceptedConfig` has what it stored.
     public var storedDifferently: [WritePlan.Adjustment] = []
     /// The plan's target with the scanner's stored frequencies, for updating the document.
