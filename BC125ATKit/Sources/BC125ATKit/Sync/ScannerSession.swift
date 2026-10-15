@@ -260,7 +260,7 @@ public actor ScannerSession {
         // Unlike the other masks, Close Call bands use 1 = on.
         guard f[3].count == 5, f[3].allSatisfy({ $0 == "0" || $0 == "1" }) else { throw Wire.FormatError(command: "CLC", fields: f) }
         config.closeCall.bandsEnabled = f[3].map { $0 == "1" }
-        config.closeCall.lockOutHits = try parse("CLC", f, Wire.bool(f[4]))
+        config.closeCall.scanHits = try parse("CLC", f, Wire.bool(f[4]))
         f = try fields("SSG", count: 1)
         config.search.serviceGroupsEnabled = try Wire.enabledFlags(fromInvertedMask: f[0], count: 10, command: "SSG")
         f = try fields("CSG", count: 1)

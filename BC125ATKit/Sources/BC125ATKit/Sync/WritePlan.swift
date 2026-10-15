@@ -116,7 +116,7 @@ public struct WritePlan: Sendable {
         if c0 != c1 {
             let bands = String(c1.bandsEnabled.map { $0 ? "1" : "0" })
             add(.search, "Close Call", Self.describeCloseCall(c0) + " → " + Self.describeCloseCall(c1),
-                "CLC,\(c1.mode.rawValue),\(Wire.flag(c1.alertBeep)),\(Wire.flag(c1.alertLight)),\(bands),\(Wire.flag(c1.lockOutHits))")
+                "CLC,\(c1.mode.rawValue),\(Wire.flag(c1.alertBeep)),\(Wire.flag(c1.alertLight)),\(bands),\(Wire.flag(c1.scanHits))")
         }
 
         // Channels. Setting a priority channel clears the bank's others, so priority channels go last.
@@ -185,7 +185,7 @@ public struct WritePlan: Sendable {
 
     static func describeCloseCall(_ cc: CloseCallSettings) -> String {
         let bands = describeEnabled(cc.bandsEnabled, names: CloseCallBand.allCases.map(\.displayName))
-        return "\(cc.mode.displayName) (Beep \(onOff(cc.alertBeep)), Light \(onOff(cc.alertLight)), Bands \(bands), Lockout \(onOff(cc.lockOutHits)))"
+        return "\(cc.mode.displayName) (Beep \(onOff(cc.alertBeep)), Light \(onOff(cc.alertLight)), Bands \(bands), Scan Hits \(onOff(cc.scanHits)))"
     }
 }
 

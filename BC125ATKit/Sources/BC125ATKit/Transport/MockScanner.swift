@@ -142,16 +142,16 @@ private struct Engine {
             let cc = config.closeCall
             if isGet {
                 let bands = String(cc.bandsEnabled.map { $0 ? "1" : "0" })
-                return "CLC,\(cc.mode.rawValue),\(Wire.flag(cc.alertBeep)),\(Wire.flag(cc.alertLight)),\(bands),\(Wire.flag(cc.lockOutHits))"
+                return "CLC,\(cc.mode.rawValue),\(Wire.flag(cc.alertBeep)),\(Wire.flag(cc.alertLight)),\(bands),\(Wire.flag(cc.scanHits))"
             }
             guard arguments.count == 5, let mode = Wire.int(arguments[0]).flatMap(CloseCallMode.init(rawValue:)),
                   let beep = Wire.bool(arguments[1]), let light = Wire.bool(arguments[2]),
-                  arguments[3].count == 5, arguments[3].allSatisfy({ $0 == "0" || $0 == "1" }), let lockOut = Wire.bool(arguments[4])
+                  arguments[3].count == 5, arguments[3].allSatisfy({ $0 == "0" || $0 == "1" }), let scanHits = Wire.bool(arguments[4])
             else { return err() }
             config.closeCall = CloseCallSettings()
             (config.closeCall.mode, config.closeCall.alertBeep, config.closeCall.alertLight) = (mode, beep, light)
             config.closeCall.bandsEnabled = arguments[3].map { $0 == "1" }
-            config.closeCall.lockOutHits = lockOut
+            config.closeCall.scanHits = scanHits
             return ok()
         case "CSP":
             guard let number = arguments.first.flatMap({ Wire.int($0, in: 1...10) }) else { return err() }

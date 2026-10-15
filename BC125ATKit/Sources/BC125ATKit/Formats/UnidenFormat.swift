@@ -72,7 +72,7 @@ public enum UnidenFormat {
                     config.closeCall.mode = try reader.value(closeCallModeNames, "Close Call mode")
                     config.closeCall.alertBeep = try reader.onOff("alert beep")
                     config.closeCall.alertLight = try reader.onOff("alert light")
-                    config.closeCall.lockOutHits = try reader.onOff("Close Call lockout")
+                    config.closeCall.scanHits = try reader.onOff("Close Call scan hits")
                 case "CloseCallBands":
                     config.closeCall.bandsEnabled = try CloseCallBand.allCases.map { band in try reader.onOff(band.displayName) }
                 case "GeneralSearch":
@@ -125,7 +125,7 @@ public enum UnidenFormat {
             add("Custom", index + 1, "Search Bnak\(index + 1)", range.lower.hertz, range.upper.hertz, onOff(!range.enabled))
         }
         let closeCall = config.closeCall
-        add("CloseCall", name(closeCall.mode, in: closeCallModeNames), onOff(closeCall.alertBeep), onOff(closeCall.alertLight), onOff(closeCall.lockOutHits))
+        add("CloseCall", name(closeCall.mode, in: closeCallModeNames), onOff(closeCall.alertBeep), onOff(closeCall.alertLight), onOff(closeCall.scanHits))
         lines.append((["CloseCallBands"] + closeCall.bandsEnabled.map(onOff)).joined(separator: "\t"))
         add("GeneralSearch", config.search.delay.rawValue, onOff(config.search.codeSearch))
         for bank in 1...ScannerConfig.bankCount {
@@ -152,7 +152,11 @@ public enum UnidenFormat {
         "Key": .keypress, "Squelch": .squelch,
     ]
     private static let priorityNames: [String: PriorityMode] = ["Off": .off, "On": .on, "Plus": .plusOn, "DND": .doNotDisturb]
-    private static let closeCallModeNames: [String: CloseCallMode] = ["Off": .off, "Pri": .priority, "DND": .doNotDisturb]
+    private static let closeCallModeNames: [String: CloseCallMode] = [
+        "Off": .off, "Pri": .priority, "DND": .doNotDisturb,
+        // Not yet seen in a file from Uniden's software; named like the others.
+        "Only": .closeCallOnly,
+    ]
     private static let serviceNames = ["Police", "Fire/Emergency", "HAM Radio", "Marine", "Railroad", "Civil Air",
                                        "Military Air", "CB Radio", "FRS/GMRS/MURS", "Racing"]
 

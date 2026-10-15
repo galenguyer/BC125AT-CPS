@@ -124,9 +124,11 @@ struct SearchView: View {
                 }
                 Toggle("Alert Beep", isOn: $config.closeCall.alertBeep)
                 Toggle("Alert Light", isOn: $config.closeCall.alertLight)
-                Toggle("Lock Out Hits While Scanning", isOn: $config.closeCall.lockOutHits)
+                Toggle("Scan Close Call Hits Bank", isOn: $config.closeCall.scanHits)
                 ForEach(CloseCallBand.allCases, id: \.self) { band in
-                    Toggle(band.displayName, isOn: $config.closeCall.bandsEnabled[band.rawValue])
+                    Toggle(isOn: $config.closeCall.bandsEnabled[band.rawValue]) {
+                        Text(band.displayName) + Text("  \(band.rangeDescription)").foregroundStyle(.secondary)
+                    }
                 }
             }
         }

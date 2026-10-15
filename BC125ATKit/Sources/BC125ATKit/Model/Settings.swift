@@ -146,27 +146,41 @@ public enum CloseCallMode: Int, CaseIterable, Codable, Sendable {
     case off = 0
     case priority = 1
     case doNotDisturb = 2
+    /// Searches the Close Call bands continuously instead of scanning, until Scan or Srch is pressed.
+    case closeCallOnly = 3
 
     public var displayName: String {
         switch self {
         case .off: "Off"
         case .priority: "Priority"
         case .doNotDisturb: "Do Not Disturb"
+        case .closeCallOnly: "Close Call Only"
         }
     }
 }
 
-/// The five Close Call bands, in `CLC` digit order.
+/// The five Close Call bands, in `CLC` digit order, named as in the scanner's menu.
 public enum CloseCallBand: Int, CaseIterable, Codable, Sendable {
-    case vhfLow, air, vhfHigh1, vhfHigh2, uhf
+    case vhfLow, civilAir, vhfHigh, militaryAir, uhf
 
     public var displayName: String {
         switch self {
         case .vhfLow: "VHF Low"
-        case .air: "Air"
-        case .vhfHigh1: "VHF High 1"
-        case .vhfHigh2: "VHF High 2"
+        case .civilAir: "Civil Air"
+        case .vhfHigh: "VHF High"
+        case .militaryAir: "Military Air"
         case .uhf: "UHF"
+        }
+    }
+
+    /// The range the owner's manual gives for the band.
+    public var rangeDescription: String {
+        switch self {
+        case .vhfLow: "25–54 MHz"
+        case .civilAir: "108–137 MHz"
+        case .vhfHigh: "137–174 MHz"
+        case .militaryAir: "225–320 MHz"
+        case .uhf: "320–512 MHz"
         }
     }
 }
@@ -178,8 +192,15 @@ public struct CloseCallSettings: Hashable, Codable, Sendable {
     public var alertLight = true
     /// Indexed by `CloseCallBand.rawValue`.
     public var bandsEnabled = Array(repeating: true, count: 5)
-    /// Lock out Close Call hits while scanning.
-    public var lockOutHits = false
+    /// Scan the Close Call Hits bank (the last 10 hits) along with the channels. `CLC` calls
+    /// this "lockout for CC hits with scan", with `0` = locked out, so `1` means on.
+    public var scanHits = false
 
     public init() {}
+
+    // Saved under its old name, which had the meaning backwards; the stored value is unchanged.
+    private enum CodingKeys: String, CodingKey {
+        case mode, alertBeep, alertLight, bandsEnabled
+        case scanHits = "lockOutHits"
+    }
 }

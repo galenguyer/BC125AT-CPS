@@ -145,6 +145,18 @@ func sampleConfig() -> ScannerConfig {
         #expect(mock.config.settings.bandPlan == .usa)
     }
 
+    /// A scanner left in Close Call Only mode reports `CLC,3`, which must not stop a read.
+    @Test func readsCloseCallOnlyAndScanHits() async throws {
+        var config = ScannerConfig()
+        config.closeCall.mode = .closeCallOnly
+        config.closeCall.scanHits = true
+        let read = try await ScannerSession(transport: MockScanner(config: config)).readConfiguration()
+        #expect(read.closeCall == config.closeCall)
+        let text = String(decoding: try NativeFormat.encode(read), as: UTF8.self)
+        #expect(text.contains(#""lockOutHits" : true"#), "saved under its old key")
+        #expect(try NativeFormat.decode(Data(text.utf8)).closeCall.scanHits)
+    }
+
     @Test func programModeRefused() async {
         let mock = MockScanner()
         mock.refusesProgramMode = true

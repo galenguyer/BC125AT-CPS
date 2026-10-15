@@ -70,7 +70,7 @@ Commands marked **P** only work in program mode. Uniden's official list has exac
 | `GLF` | P | `GLF` → `GLF,frq` … `GLF,-1` | `GLF,x` → `GLF,OK` | Call repeatedly until `-1`. See §3.3 for how to reset the walk |
 | `ULF` | P | – | `ULF,frq` | Remove a global lockout |
 | `LOF` | P | – | `LOF,frq` | Add a global lockout |
-| `CLC` | P | `CLC` → `CLC,mode,altb,altl,band,lout` | same | Mode `0` off · `1` CC priority · `2` CC DND; alert beep and alert light `0`/`1`; band is 5 digits (§3.4); `lout` = "lockout for CC hits with scan" `0`/`1` |
+| `CLC` | P | `CLC` → `CLC,mode,altb,altl,band,lout` | same | Mode `0` off · `1` CC priority · `2` CC DND · `3` Close Call Only (searches the CC bands continuously; tested: accepted and kept across `EPG`); alert beep and alert light `0`/`1`; band is 5 digits (§3.4); `lout` is "lockout for CC hits with scan", `0` locked out / `1` unlocked, i.e. the menu's **Scan Hits** (scan the Close Call Hits bank of the last 10 hits; default off). The app calls it `scanHits`, `1` = on |
 | `SSG` | P | `SSG` → `SSG,##########` | same | Service search groups, **`0` = enabled**. Order: Police, Fire/Emergency, Ham, Marine, Railroad, Civil Air, Military Air, CB, FRS/GMRS/MURS, Racing |
 | `CSG` | P | `CSG` → `CSG,##########` | same | Custom search ranges 1…10, **`0` = enabled** |
 | `CSP` | P | `CSP,idx` → `CSP,idx,lo,hi,` | `CSP,idx,lo,hi` | Range index 1–10. Reply is `CSP,1,00250000,00279950`. **No trailing comma** |
@@ -131,7 +131,7 @@ Any other value, such as `1–63`, `114–126`, or `232–239`, is invalid. bc12
 | `SCG` | 10 | enabled | disabled | banks 1…10 |
 | `SSG` | 10 | enabled | disabled | Police … Racing (see table) |
 | `CSG` | 10 | enabled | disabled | custom ranges 1…10 |
-| `CLC` band | 5 | **off** | **on** | VHF Low1, Air, VHF High1, VHF High2, UHF |
+| `CLC` band | 5 | **off** | **on** | VHF Low 25–54, Civil Air 108–137, VHF High 137–174, Military Air 225–320, UHF 320–512 MHz (owner's manual and protocol document agree) |
 
 **Tested:** the scanner accepts all ten disabled for `SCG`, `SSG` and `CSG` (`OK`, and it reads back `1111111111`), even though Uniden's spec says it can't be done. So disabling everything is allowed, but the app shows it as a **warning** because the scanner would then have nothing to scan. The Close Call bands may all be off.
 
@@ -248,7 +248,7 @@ Tab-separated text, CRLF line endings, one record per line, in this order:
 | `WxPri` | On/Off | |
 | `Service` ×10 | n, name, flag | |
 | `Custom` ×10 | n, name, lower Hz, upper Hz, flag | Names are Uniden's ("Search Bnak1", sic); the app doesn't keep them |
-| `CloseCall` | mode, beep, light, lockout | Mode `Off` `Pri` `DND` (0–2) |
+| `CloseCall` | mode, beep, light, lockout | Mode `Off` `Pri` `DND` (0–2); `Only` for 3 is assumed, not yet seen. The last field is Scan Hits (§3.1 `CLC`) |
 | `CloseCallBands` | 5 × On/Off | On = enabled |
 | `GeneralSearch` | delay, code search | |
 | `Conventional` | n, name, flag | One per bank, each followed by its 50 `C-Freq` lines. "Bank n" means no name |
@@ -338,10 +338,10 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Every edit can be undone through the document's `UndoManager`.
 
 ### 8.3 Search & Close Call
-Toggles for service search groups. The 10 custom ranges, one row each: lower and upper frequency, then the enabled switch. Close Call settings for mode, alert beep, alert light, the band checkboxes, and lockout. Search delay and code search.
+Toggles for service search groups. The 10 custom ranges, one row each: lower and upper frequency, then the enabled switch. Close Call settings for mode, alert beep, alert light, the band checkboxes (with their ranges), and Scan Hits. Search delay and code search.
 
 ### 8.4 Global Lockouts
-An editable list of frequencies with add and remove. The maximum count is unknown (§3.3).
+An editable list of frequencies with add and remove. It holds at most 100 (§3.3; the owner's manual agrees).
 
 ### 8.5 Settings
 Backlight, key beep, key lock, contrast, battery charge time (with bc125py's suggested hours for each NiMH capacity: 1500 mAh → 9 h … 2700 mAh → 16 h), priority mode, weather alert priority, volume, and squelch. The band plan (§3.5). Bank names are stored in the document only and are clearly labeled that way.
