@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct BC125ATCPSApp: App {
     @State private var monitor = ScannerMonitor()
+    @State private var updates = UpdateChecker()
 
     init() {
         // Open a new, empty document at launch instead of the Open panel: reading from the
@@ -16,12 +17,14 @@ struct BC125ATCPSApp: App {
         DocumentGroup(newDocument: ScannerDocument()) { file in
             DocumentView(document: file.$document)
                 .environment(monitor)
+                .environment(updates)
         }
         .commands {
             ScannerCommands(monitor: monitor)
         }
         Settings {
             AppSettingsView()
+                .environment(updates)
         }
     }
 }
@@ -32,7 +35,7 @@ struct AppSettingsView: View {
 
     @AppStorage(BackupStore.retentionKey) private var retention = BackupStore.defaultRetention
     @AppStorage(duplicateWarningsKey) private var duplicateWarnings = true
-    @State private var updates = UpdateChecker()
+    @Environment(UpdateChecker.self) private var updates
 
     var body: some View {
         Form {
@@ -48,7 +51,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("BC125AT CPS")
             } footer: {
-                Text("Checks GitHub for a newer release each time Settings opens. To update, download the new release and replace the app in Applications.")
+                Text("Checks GitHub for a newer release at launch and each time Settings opens, and shows a notice at the bottom of the sidebar. To update, download the new release and replace the app in Applications.")
                     .foregroundStyle(.secondary)
             }
             Section {

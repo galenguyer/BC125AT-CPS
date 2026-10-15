@@ -1,9 +1,18 @@
 import Foundation
 
 /// Looks up the newest GitHub release and compares it with this build's version. It only
-/// reports; updating is done by hand from the release page.
+/// reports; updating is done by hand from the release page. One instance is shared by every
+/// window and Settings, so hiding or skipping an update applies everywhere.
 @MainActor @Observable
 final class UpdateChecker {
+    /// A newer release to tell the user about.
+    struct Notice: Equatable {
+        var version: String
+        var page: URL
+    }
+
+    static let skippedVersionKey = "skippedUpdateVersion"
+
     enum Status: Equatable {
         case idle
         case checking
@@ -19,6 +28,30 @@ final class UpdateChecker {
     static let currentBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
 
     private(set) var status = Status.idle
+    /// Set by "Later": the notice stays hidden until the app is next launched.
+    private(set) var hiddenForSession = false
+    /// A version the user chose to skip. A later release is shown again.
+    private(set) var skippedVersion = UserDefaults.standard.string(forKey: skippedVersionKey) ?? "" {
+        didSet { UserDefaults.standard.set(skippedVersion, forKey: Self.skippedVersionKey) }
+    }
+    private var checkedThisLaunch = false
+
+    /// The update to show in the window, unless it's been hidden or skipped.
+    var notice: Notice? {
+        guard case .available(let version, let page) = status, !hiddenForSession, version != skippedVersion else { return nil }
+        return Notice(version: version, page: page)
+    }
+
+    func hideForSession() { hiddenForSession = true }
+
+    func skip(_ version: String) { skippedVersion = version }
+
+    /// Checks the first time it's called after launch; later calls do nothing.
+    func checkOnce() async {
+        guard !checkedThisLaunch else { return }
+        checkedThisLaunch = true
+        await check()
+    }
 
     func check() async {
         guard status != .checking else { return }

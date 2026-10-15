@@ -39,6 +39,7 @@ struct DocumentView: View {
         NavigationSplitView {
             Sidebar(config: $document.config, issues: issues, selection: $selection, window: window)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+                .safeAreaInset(edge: .bottom, spacing: 0) { UpdateNotice() }
         } detail: {
             VStack(spacing: 0) {
                 detail(issues: issues)

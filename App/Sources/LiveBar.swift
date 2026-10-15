@@ -4,6 +4,9 @@ import SwiftUI
 /// The strip along the bottom of the window: what the scanner is receiving, the last
 /// transmission heard, and its volume and squelch (SPEC.md §8.6).
 struct LiveBar: View {
+    /// Also the height of the sidebar's update note, so the two line up.
+    static let height: CGFloat = 34
+
     var live: LiveMonitor
 
     var body: some View {
@@ -20,7 +23,7 @@ struct LiveBar: View {
                 .help(live.enabled ? "Stop watching the scanner (frees it for other programs)" : "Watch what the scanner is receiving")
         }
         .padding(.horizontal, 12)
-        .frame(height: 34)
+        .frame(height: Self.height)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
     }
