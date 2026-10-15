@@ -1,18 +1,38 @@
 #!/bin/bash
 # Builds a release of BC125AT CPS (SPEC.md §6.3) from a clean checkout of HEAD, so uncommitted
-# changes (such as a local signing team in project.pbxproj) never reach a release:
+# changes never reach a release:
 #   1. runs the BC125ATKit tests,
-#   2. archives the app (Release) and signs it ad hoc,
+#   2. archives the app (Release) and signs it with a Developer ID,
 #   3. checks the signature and entitlements,
-#   4. zips the app and the bc125at-cli tool into dist/ with SHA-256 checksums.
+#   4. zips the app and the bc125at-cli tool into dist/, notarizes both, staples the app,
+#      and writes SHA-256 checksums.
 #
-# Releases are ad-hoc signed and not notarized until there's a paid Apple Developer account;
-# see README.md for how users open them. To sign with a Developer ID and notarize instead, set:
-#   DEVELOPER_ID="Developer ID Application: Name (TEAMID)"
+# DEVELOPER_ID="Developer ID Application: Name (TEAMID)" picks the certificate; without it, the
+# first Developer ID Application identity in the keychain is used. Notarization needs either
 #   NOTARY_PROFILE=<keychain profile created with `xcrun notarytool store-credentials`>
-# That path isn't exercised yet, because there's no account to test it with.
+# or an App Store Connect API key (what .github/workflows/release.yml uses):
+#   NOTARY_KEY=<path to AuthKey_XXXX.p8>  NOTARY_KEY_ID=<key ID>  NOTARY_ISSUER=<issuer ID>
+# scripts/release-unsigned.sh builds the same thing signed ad hoc and not notarized.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+if [[ -n "${UNSIGNED:-}" ]]; then
+    DEVELOPER_ID=""
+    NOTARY_ARGS=()
+else
+    if [[ -z "${DEVELOPER_ID:-}" ]]; then
+        DEVELOPER_ID=$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+        [[ -n "$DEVELOPER_ID" ]] || { echo "error: no Developer ID Application identity in the keychain; set DEVELOPER_ID or use scripts/release-unsigned.sh" >&2; exit 1; }
+    fi
+    if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+        NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+    elif [[ -n "${NOTARY_KEY:-}" ]]; then
+        NOTARY_ARGS=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+    else
+        echo "error: set NOTARY_PROFILE or NOTARY_KEY/NOTARY_KEY_ID/NOTARY_ISSUER to notarize, or use scripts/release-unsigned.sh" >&2
+        exit 1
+    fi
+fi
 
 PROJECT="BC125AT CPS.xcodeproj"
 SCHEME="BC125AT CPS"
@@ -35,7 +55,7 @@ VERSION=$(xcodebuild -project "$SRC/$PROJECT" -target "$SCHEME" -configuration R
 APP_ZIP="dist/BC125AT-CPS-$VERSION.zip"
 CLI_ZIP="dist/bc125at-cli-$VERSION-macos.zip"
 
-echo "==> BC125AT CPS $VERSION"
+echo "==> BC125AT CPS $VERSION (${DEVELOPER_ID:-ad hoc})"
 
 echo "==> Testing BC125ATKit"
 (cd "$SRC/BC125ATKit" && swift test --quiet)
@@ -44,6 +64,7 @@ echo "==> Archiving the app"
 xcodebuild -project "$SRC/$PROJECT" -scheme "$SCHEME" -configuration Release \
     -destination "generic/platform=macOS" \
     -archivePath "$WORK/BC125AT CPS.xcarchive" -derivedDataPath "$WORK/DerivedData" \
+    CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
     archive -quiet
 APP="$WORK/BC125AT CPS.xcarchive/Products/Applications/BC125AT CPS.app"
 
@@ -71,10 +92,26 @@ rm -f "$APP_ZIP" "$CLI_ZIP"
 ditto -c -k --keepParent "$APP" "$APP_ZIP"
 ditto -c -k "$CLI" "$CLI_ZIP"
 
-if [[ -n "${DEVELOPER_ID:-}" && -n "${NOTARY_PROFILE:-}" ]]; then
+# notarytool can exit 0 for a rejected submission, so check the status it reports.
+notarize() {
+    local out
+    out=$(xcrun notarytool submit "$1" "${NOTARY_ARGS[@]}" --wait 2>&1) || true
+    echo "$out"
+    if ! grep -q "status: Accepted" <<<"$out"; then
+        local id
+        id=$(awk '/^ *id: / { print $2; exit }' <<<"$out")
+        [[ -n "$id" ]] && xcrun notarytool log "$id" "${NOTARY_ARGS[@]}" || true
+        echo "error: notarization of $1 failed" >&2
+        exit 1
+    fi
+}
+if [[ -n "$DEVELOPER_ID" ]]; then
     echo "==> Notarizing"
-    xcrun notarytool submit "$APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+    notarize "$APP_ZIP"
+    # A bare executable can't be stapled; Gatekeeper looks its ticket up online instead.
+    notarize "$CLI_ZIP"
     xcrun stapler staple "$APP"
+    spctl --assess --type execute --verbose "$APP"
     rm -f "$APP_ZIP"
     ditto -c -k --keepParent "$APP" "$APP_ZIP"
 fi

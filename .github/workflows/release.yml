@@ -2,6 +2,12 @@
 # attaches the zips and checksums to that tag's GitHub release. The tag must match the app's
 # MARKETING_VERSION. Running it by hand (Actions ▸ Release ▸ Run workflow) builds without
 # releasing and keeps the zips as a workflow artifact.
+#
+# The build is signed with a Developer ID and notarized, using these repository secrets:
+#   DEVELOPER_ID_P12           the Developer ID Application certificate and its key, as base64 of a .p12
+#   DEVELOPER_ID_P12_PASSWORD  the .p12's password
+#   NOTARY_KEY_P8              an App Store Connect API key (the contents of AuthKey_XXXX.p8)
+#   NOTARY_KEY_ID, NOTARY_ISSUER  that key's ID and issuer ID
 name: Release
 
 on:
@@ -35,8 +41,54 @@ jobs:
               exit 1
           fi
 
+      - name: Set up signing
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          if [[ -z "$DEVELOPER_ID_P12" || -z "$NOTARY_KEY_P8" ]]; then
+              echo "::error::the signing secrets aren't set"
+              exit 1
+          fi
+
+          # A throwaway keychain holding only the Developer ID certificate.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          base64 --decode <<<"$DEVELOPER_ID_P12" > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$KEYCHAIN" -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [[ -z "$IDENTITY" ]]; then
+              echo "::error::no Developer ID Application identity in DEVELOPER_ID_P12"
+              exit 1
+          fi
+          echo "Signing as $IDENTITY"
+
+          printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+          {
+              echo "DEVELOPER_ID=$IDENTITY"
+              echo "NOTARY_KEY=$RUNNER_TEMP/notary-key.p8"
+              echo "NOTARY_KEY_ID=$NOTARY_KEY_ID"
+              echo "NOTARY_ISSUER=$NOTARY_ISSUER"
+          } >> "$GITHUB_ENV"
+
       - name: Build
         run: scripts/release.sh
+
+      - name: Clean up signing
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary-key.p8"
 
       - name: Publish the GitHub release
         if: github.ref_type == 'tag'

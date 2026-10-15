@@ -81,7 +81,8 @@ bc125at-cli hold 133                   # hold on channel 133
 ```sh
 cd BC125ATKit && swift test            # the protocol and model library, with 74 tests
 open "BC125AT CPS.xcodeproj"           # the app
-scripts/release.sh                     # from a clean checkout of HEAD: test, archive, sign ad hoc, zip into dist/
+scripts/release.sh                     # from a clean checkout of HEAD: test, archive, sign with a Developer ID, notarize, zip into dist/
+scripts/release-unsigned.sh            # the same, but signed ad hoc and not notarized
 ```
 
 Pushing a version tag (`git tag -s v1.1.0 && git push origin v1.1.0`) runs the same script on GitHub
