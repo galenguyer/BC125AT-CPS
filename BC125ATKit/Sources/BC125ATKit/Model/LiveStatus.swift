@@ -42,4 +42,15 @@ public struct LiveStatus: Hashable, Sendable {
         muted = field(8) == "1"
         channel = Int(field(10)).flatMap { (1...ScannerConfig.channelCount).contains($0) ? $0 : nil }
     }
+
+    /// Whether this reply, following `previous`, looks like a priority check rather than the
+    /// scanner moving (SPEC.md §3.7): the same memory channel, a different frequency, and no signal.
+    /// With priority mode on, the scanner samples the bank's priority channel every 2 seconds even in
+    /// hold, and a `GLG` that lands on it reports that channel's frequency under the held channel's
+    /// number and name, for one poll. A real change on the channel looks the same at first, so callers
+    /// ignore such a reply for one poll only.
+    public func looksLikePriorityCheck(after previous: LiveStatus?) -> Bool {
+        guard let previous, let channel, channel == previous.channel else { return false }
+        return frequency != previous.frequency && !receiving
+    }
 }

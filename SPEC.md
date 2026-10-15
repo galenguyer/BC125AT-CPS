@@ -207,6 +207,8 @@ Not in Uniden's BC125AT list, but tested on firmware 1.06.06: outside program mo
 
 Examples: `GLG,04625625,NFM,,82,,,TALKAROUND,1,0,,312,` while receiving; `GLG,01215000,AM,,0,,,GUARD,0,1,,1,` in Scan Hold. While scanning, the reply changes several times a second, and the fields can momentarily disagree (one channel's frequency with the next one's name), so a channel is only shown once the scanner stays on it. `VOL` and `SQL` also work outside program mode and take effect immediately.
 
+**Priority checks in hold.** With priority mode on, a `GLG` that lands on the scanner's priority check reports the priority channel's frequency under the held channel's number and name, with SQL `0`, for one poll. Observed 2026-10-15 on firmware 1.06.06, held on channel 13 (118.7000): 3 of about 150 polls over 30 s returned `GLG,01215000,AM,,0,,,YYZ TWR N,0,1,,13,`. 121.5000 is channel 1 (`CIN,1,GUARD,01215000,AM,0,5,0,1`), bank 1's priority channel, with priority mode `PRI,3` (Do Not Disturb); both read back afterwards with `bc125at-cli raw --prg PRI CIN,1`. Two of the samples were 2.07 s apart, consistent with the owner's manual's priority check every 2 seconds. The live bar treats such a reply as the scanner staying put rather than moving (`LiveStatus.looksLikePriorityCheck`), for one poll only, so a frequency that really changes on the channel is still shown on the next. Before this, each sample showed "Scanning…" for about 0.8 s. Telling scanning from hold (§3.8) compares channel numbers only, so it was never affected.
+
 ### 3.8 Scan and hold (`KEY`)
 `KEY,<key>,P` presses a key as a finger would. It isn't in Uniden's BC125AT list, but works outside program mode (tested 2026-10-14, firmware 1.06.06). Tried: `S` (Scan), `H` (Hold) and the digits. Uniden's other scanners also use `L` (L/O), `F` (Func), `E` (Pgm/E), `.` (Clr), `<`/`>` (scroll) and the modes `L` (long press), `H`/`R` (hold down, release); untried here. The scanner's behaviour, all tested:
 - **Scan** resumes scanning from hold, and does nothing while scanning.
@@ -317,7 +319,7 @@ Commands are described by a `ScannerModel` protocol: channel count, bank count, 
 - Releases are built by `scripts/release.sh`. It runs the Kit tests, archives a universal (arm64 + x86_64) Release build, re-signs it with a Developer ID **with the hardened runtime**, checks the signature and the four entitlements, builds a universal `bc125at-cli` signed the same way, writes `dist/BC125AT-CPS-<version>.zip` and `dist/bc125at-cli-<version>-macos.zip`, notarizes both, staples the app's ticket, and writes `SHA256SUMS-<version>.txt`. It notarizes with a `NOTARY_PROFILE` keychain profile or an App Store Connect API key (`NOTARY_KEY`, `NOTARY_KEY_ID`, `NOTARY_ISSUER`), and stops if either step is unavailable. `scripts/release-unsigned.sh` builds the same thing signed ad hoc and not notarized; a quarantined download of that is `rejected` by Gatekeeper, as the README's instructions expect. `.github/workflows/release.yml` runs `release.sh` on GitHub Actions when a tag like `v1.1.0` is pushed, importing the certificate and API key from repository secrets, and attaches the zips to its release. Versions have three fields, and the tag must be `v` plus `MARKETING_VERSION`.
 
 ### 6.4 Building and testing
-- Kit and CLI: `cd BC125ATKit && swift test` runs the 86 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
+- Kit and CLI: `cd BC125ATKit && swift test` runs the 87 Kit tests, including `BandPlan` against every measured value; `swift run bc125at-cli read out.bc125at` reads a real scanner exactly as the app does.
 - App: open `BC125AT CPS.xcodeproj`, or `xcodebuild -project "BC125AT CPS.xcodeproj" -scheme "BC125AT CPS" build`. It's signed "Apple Development" with team `L3T933ZXSR`; release builds override that and archive ad hoc before re-signing.
 
 ## 7. Sync Behavior
@@ -384,7 +386,7 @@ Backlight, key beep, key lock, contrast, battery charge time (with bc125py's sug
 
 ### 8.6 Live bar
 A strip along the bottom of every document window (`LiveBar`, `LiveMonitor`):
-- **Now:** while a signal is open, or once the scanner has stayed on a channel for 0.6 s (hold, or the delay after a transmission), the channel number, name, frequency, modulation and tone, with a green dot while receiving. Otherwise "Scanning…".
+- **Now:** while a signal is open, or once the scanner has stayed on a channel for 0.6 s (hold, or the delay after a transmission; a one-poll frequency change on the same channel is a priority check, §3.7, not a move), the channel number, name, frequency, modulation and tone, with a green dot while receiving. Otherwise "Scanning…".
 - **Last:** the most recent transmission and how long ago, so a short one isn't missed.
 - **Scan and Hold buttons** (§3.8): Scan resumes scanning; Hold stops on the channel shown.
 - **Volume and squelch sliders** that change the scanner immediately, and pick up changes made on the scanner itself.

@@ -70,7 +70,7 @@ bc125at-cli hold 133                   # hold on channel 133
 ## Building from source
 
 ```sh
-cd BC125ATKit && swift test            # the protocol and model library, with 74 tests
+cd BC125ATKit && swift test            # the protocol and model library, with 87 tests
 open "BC125AT CPS.xcodeproj"           # the app
 scripts/release.sh                     # from a clean checkout of HEAD: test, archive, sign with a Developer ID, notarize, zip into dist/
 scripts/release-unsigned.sh            # the same, but signed ad hoc and not notarized

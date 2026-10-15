@@ -55,6 +55,8 @@ final class LiveMonitor {
     @ObservationIgnored private var pendingAction: Action?
     @ObservationIgnored private var lastLevelChange = Date.distantPast
     @ObservationIgnored private var lastMove = Date.distantPast
+    /// A frequency ignored as a priority check on the last poll (see `apply`).
+    @ObservationIgnored private var ignoredSample: Frequency?
 
     /// How often to ask the scanner what it's doing.
     private static let interval = Duration.milliseconds(200)
@@ -219,6 +221,13 @@ final class LiveMonitor {
     }
 
     private func apply(_ new: LiveStatus) {
+        // A priority check during hold isn't the scanner moving: keep showing the held channel
+        // (SPEC.md §3.7). A frequency that's still there on the next poll is real, and is shown.
+        if new.looksLikePriorityCheck(after: status), ignoredSample != new.frequency {
+            ignoredSample = new.frequency
+            return
+        }
+        ignoredSample = nil
         if new.channel != status?.channel || new.frequency != status?.frequency { lastMove = .now }
         status = new
         settled = new.frequency != nil && (new.receiving || Date.now.timeIntervalSince(lastMove) > Self.settleTime)
