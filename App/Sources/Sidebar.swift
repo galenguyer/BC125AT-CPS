@@ -64,8 +64,6 @@ private struct BankRow: View {
     var bank: Int
     var config: ScannerConfig
     var hasErrors: Bool
-    /// `.increased` on the selected row, whose background is the accent colour.
-    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         let name = config.bankNames[bank - 1]
@@ -79,18 +77,13 @@ private struct BankRow: View {
                 }
             }
         } icon: {
-            Image(systemName: scanEnabled ? "\(bank % 10).circle.fill" : "\(bank % 10).circle")
-                .foregroundStyle(iconStyle(scanEnabled: scanEnabled))
+            // A scanned bank keeps the sidebar's own icon colour (accent, white on a selected row),
+            // like All Channels. Setting a colour here would stop macOS swapping it on selection.
+            let icon = Image(systemName: scanEnabled ? "\(bank % 10).circle.fill" : "\(bank % 10).circle")
+            if scanEnabled { icon } else { icon.foregroundStyle(.secondary) }
         }
         .badge(config.usedChannelCount(inBank: bank))
         .help(scanEnabled ? "Bank \(bank) is included when scanning" : "Bank \(bank) is skipped when scanning")
         .accessibilityValue(scanEnabled ? "Scan enabled" : "Scan disabled")
-    }
-
-    /// Accent for a scanned bank, grey for a skipped one; on the selected row's accent
-    /// background, white so the circle stays visible.
-    private func iconStyle(scanEnabled: Bool) -> AnyShapeStyle {
-        if prominence == .increased { return AnyShapeStyle(.white.opacity(scanEnabled ? 1 : 0.7)) }
-        return scanEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary)
     }
 }
