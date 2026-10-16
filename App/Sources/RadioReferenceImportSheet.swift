@@ -9,7 +9,8 @@ struct RadioReferenceFile: Identifiable {
 }
 
 /// Choose which frequencies from a RadioReference export to import, and the empty channels to put
-/// them in (SPEC.md §5.2). Only rows the scanner can receive are offered, all selected to start.
+/// them in (SPEC.md §5.2). Only rows the scanner can receive are offered, all selected to start
+/// except ones already in the document with the same name and frequency.
 struct RadioReferenceImportSheet: View {
     var file: RadioReferenceFile
     var config: ScannerConfig
@@ -36,8 +37,9 @@ struct RadioReferenceImportSheet: View {
             if let frequency = config[channel: number].frequency { existing[frequency, default: []].append(number) }
         }
         self.existing = existing
-        _selected = State(initialValue: Set(usable.map(\.id)))
-        _start = State(initialValue: config.firstEmptyRun(ofLength: usable.count) ?? config.firstEmptyRun(ofLength: 1) ?? 1)
+        let selection = RadioReferenceFormat.defaultSelection(file.entries, in: config)
+        _selected = State(initialValue: selection)
+        _start = State(initialValue: config.firstEmptyRun(ofLength: max(selection.count, 1)) ?? config.firstEmptyRun(ofLength: 1) ?? 1)
     }
 
     private var visible: [RadioReferenceFormat.Entry] {
@@ -141,8 +143,11 @@ struct RadioReferenceImportSheet: View {
     private func notes(for entry: RadioReferenceFormat.Entry) -> String? {
         var notes: [String] = []
         if let note = entry.note { notes.append(note) }
-        if let frequency = entry.channel?.frequency, let numbers = existing[frequency] {
-            notes.append("Already on channel \(numbers.map(String.init).joined(separator: ", "))")
+        if let channel = entry.channel, let frequency = channel.frequency, let numbers = existing[frequency] {
+            let list = numbers.map(String.init).joined(separator: ", ")
+            notes.append(numbers.contains { config[channel: $0].name == channel.name }
+                ? "Already on channel \(list) with the same name, so it isn't selected"
+                : "This frequency is already on channel \(list)")
         }
         return notes.isEmpty ? nil : notes.joined(separator: "\n")
     }

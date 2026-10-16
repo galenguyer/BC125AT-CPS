@@ -66,6 +66,18 @@ import Testing
         #expect(throws: RadioReferenceFormat.ImportError.empty) { try RadioReferenceFormat.entries(from: "") }
     }
 
+    @Test func leavesDuplicatesUnselected() throws {
+        let entries = try RadioReferenceFormat.entries(from: Self.export + "118.30000,0.00000,,,Tower again,\"ROC Tower\",,,AM,BM,Aircraft\n")
+        var config = ScannerConfig()
+        // Same name and frequency as line 3, so it's left out; same frequency as line 2 with
+        // another name, so that one stays selected.
+        config[channel: 7] = Channel(name: "Webster Highway", frequency: Frequency(parsing: "37.9"), modulation: .fm)
+        config[channel: 8] = Channel(name: "Tower", frequency: Frequency(parsing: "118.3"), modulation: .am)
+        // Line 11 repeats line 2 within the file.
+        #expect(RadioReferenceFormat.defaultSelection(entries, in: config) == [2, 4, 9])
+        #expect(RadioReferenceFormat.defaultSelection(entries, in: ScannerConfig()) == [2, 3, 4, 9])
+    }
+
     @Test func findsRoomForChannels() {
         var config = ScannerConfig()
         config[channel: 3] = Channel(frequency: Frequency(parsing: "121.5"))

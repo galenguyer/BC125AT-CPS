@@ -98,6 +98,20 @@ public enum RadioReferenceFormat {
         entry.channel = channel
     }
 
+    /// The usable rows to select at first: all of them, except ones whose name and frequency are
+    /// already on a channel in `config` or on an earlier row, so importing an overlapping file
+    /// doesn't add the same channel twice.
+    public static func defaultSelection(_ entries: [Entry], in config: ScannerConfig) -> Set<Int> {
+        struct Key: Hashable { var name: String; var frequency: Frequency }
+        var seen = Set(config.channels.compactMap { channel in channel.frequency.map { Key(name: channel.name, frequency: $0) } })
+        var selected = Set<Int>()
+        for entry in entries {
+            guard let channel = entry.channel, let frequency = channel.frequency else { continue }
+            if seen.insert(Key(name: channel.name, frequency: frequency)).inserted { selected.insert(entry.id) }
+        }
+        return selected
+    }
+
     static func reason(forMode mode: String) -> String {
         let key = mode.uppercased().filter { $0.isLetter || $0.isNumber }
         if key.isEmpty { return "No mode" }
