@@ -202,7 +202,9 @@ final class LiveMonitor {
                 apply(try await session.liveStatus())
                 // Pick up changes made on the scanner itself, but not while a slider is moving.
                 if polls % 10 == 0, Date.now.timeIntervalSince(lastLevelChange) > 2 {
-                    (volume, squelch) = try await session.levels()
+                    let levels = try await session.levels()
+                    // A slider moved while the levels were being read wins.
+                    if Date.now.timeIntervalSince(lastLevelChange) > 2 { (volume, squelch) = levels }
                 }
                 polls += 1
                 state = .live
