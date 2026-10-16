@@ -28,6 +28,7 @@ struct DocumentView: View {
     /// Built only when Export is chosen.
     @State private var exportFile: ExportFile?
     @State private var importSummary: (title: String, message: String)?
+    @State private var radioReferenceFile: RadioReferenceFile?
     /// Identifies this window for drag and drop.
     @State private var window = UUID()
     @AppStorage(AppSettingsView.duplicateWarningsKey) private var duplicateWarnings = true
@@ -65,6 +66,7 @@ struct DocumentView: View {
         .focusedSceneValue(\.documentActions, DocumentActions(
             read: requestRead, write: requestWrite, canUseScanner: canUseScanner,
             importCSV: { startImport(.csv) }, exportCSV: { startExport(.csv(config)) },
+            importRadioReference: { startImport(.radioReference) },
             importUniden: { startImport(.uniden) }, exportUniden: { startExport(.uniden(config)) },
             compare: requestCompare
         ))
@@ -92,11 +94,17 @@ struct DocumentView: View {
         .sheet(isPresented: .constant(writer.state.isPresented)) {
             WriteSheet(writer: writer, write: startWrite)
         }
+        .sheet(item: $radioReferenceFile) { file in
+            RadioReferenceImportSheet(file: file, config: config) { channels, start in
+                insertChannels(channels, at: start)
+            }
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: importKind.contentTypes) { result in
             guard case .success(let url) = result else { return }
             switch importKind {
             case .csv: importCSV(from: url)
             case .uniden: importUniden(from: url)
+            case .radioReference: openRadioReference(url)
             }
         }
         .fileExporter(isPresented: $exporting, document: exportFile, contentType: exportFile?.contentType ?? .commaSeparatedText,
@@ -240,6 +248,36 @@ struct DocumentView: View {
         }
     }
 
+    // MARK: RadioReference
+
+    private func openRadioReference(_ url: URL) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
+            let entries = try RadioReferenceFormat.entries(from: text, bandPlan: config.channelPlan)
+            guard entries.contains(where: \.isUsable) else {
+                importSummary = ("No Frequencies to Import",
+                                 "None of the \(entries.count) frequencies in \(url.lastPathComponent) can be used on the BC125AT. It receives analog AM, FM and FMN in 25–54, 108–174, 225–380 and 400–512 MHz.")
+                return
+            }
+            radioReferenceFile = RadioReferenceFile(name: url.lastPathComponent, entries: entries)
+        } catch let error as RadioReferenceFormat.ImportError {
+            importSummary = ("Couldn't Read the RadioReference File", error.description)
+        } catch {
+            importSummary = ("Couldn't Read the RadioReference File", error.localizedDescription)
+        }
+    }
+
+    /// Adds channels to empty slots as one undo step, then shows where they went.
+    private func insertChannels(_ channels: [Channel], at start: Int) {
+        var updated = document.config
+        guard updated.insert(channels, at: start) else { return }
+        document.config = updated
+        let firstBank = Channel.bank(ofChannel: start)
+        selection = firstBank == Channel.bank(ofChannel: start + channels.count - 1) ? .bank(firstBank) : .allChannels
+    }
+
     /// Replaces the document with a file from Uniden's software, as one undo step. The file has
     /// no global lockouts, so the document's are kept, as are its notes and any bank names the
     /// file leaves at Uniden's defaults.
@@ -273,11 +311,11 @@ struct DocumentView: View {
 }
 
 enum ImportKind {
-    case csv, uniden
+    case csv, uniden, radioReference
 
     var contentTypes: [UTType] {
         switch self {
-        case .csv: [.commaSeparatedText, .plainText]
+        case .csv, .radioReference: [.commaSeparatedText, .plainText]
         case .uniden: [.unidenBC125AT]
         }
     }

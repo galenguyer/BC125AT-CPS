@@ -258,6 +258,7 @@ Each model type has its own `validate() -> [ValidationIssue]`. An issue is eithe
 | `.bc125at` (native) | A JSON-encoded `ScannerConfig` with a format version. UTType is `net.k9fgt.bc125at.config`. Tones are written as Uniden's files write them (`Off`, `Srch`, `NoTone`, `C110.9`, `D023`; §5.1). The app shows the tone-squelch-off setting as **CSQ**. |
 | CSV | Import and export channels. The columns are `Channel,Bank,Name,Frequency,Modulation,Tone,Delay,Lockout,Priority`. Tones are written in readable form (`CTCSS 100.0`, `DCS 023`). |
 | Uniden `.bc125at_ss` | Import and export (File menu; `bc125at-cli convert`). See §5.1. |
+| RadioReference CSV | Import only (**File ▸ Import from RadioReference…**). See §5.2. |
 
 ### 5.1 Uniden `.bc125at_ss`
 Files from Uniden's BC125AT software (`UnidenFormat`). Worked out from three files the maintainer saved from Uniden's software and wrote to the scanner with it; after each, every field (3,539 per file) was compared with a dump of the scanner. Exporting an imported file reproduces Uniden's file byte for byte.
@@ -283,6 +284,16 @@ Import replaces the whole document as one undo step, keeping its global lockouts
 
 **Unexplained:** after Uniden's software wrote a file with `WxPri On` and band plan `Canada`, the scanner read back `WXS,0`. With `USA` it read back `WXS,1`. It isn't the scanner: `BPL` leaves `WXS` alone in both directions, `WXS,1` can be set and read back on the Canada plan, and switching at power-on left `WXS,1` alone too (tested 2026-10-14). So Uniden's software doesn't send weather priority on (or sends it off) for a Canada file. This app writes `WXS` as the document says on either plan.
 
+### 5.2 RadioReference CSV
+CSV exports of RadioReference's county, agency and category frequency lists (`RadioReferenceFormat`): `Frequency Output,Frequency Input,FCC Callsign,Agency/Category,Description,Alpha Tag,PL Output Tone,PL Input Tone,Mode,Class Station Code,Tag`. Columns are matched by name; `Frequency Output` and `Mode` are required.
+
+- **Usable rows** have mode `AM`, `FM` (wideband) or `FMN` (narrowband → `NFM`) and an output frequency in the scanner's bands. Every other row is listed with the reason: digital (DMR, P25/Project 25, NXDN, D-STAR, …), trunked (LTR, Motorola, EDACS), data (`Telm`), or out of band.
+- **Name** is the Alpha Tag (the Description if there's no tag), with commas and non-ASCII characters removed, cut to 16 characters.
+- **Tone** comes from `PL Output Tone`, the tone the station transmits: `110.9 PL` → CTCSS 110.9, `023 DPL` → DCS 023. A tone the scanner can't decode (`NAC`, `RAN`, `CC`, or a non-standard value) leaves the channel open (CSQ), with a note.
+- Delay is 2 s, unlocked, not priority.
+
+The import sheet lists the usable rows, all selected, with a filter and Select All/None that act on the filtered rows. Rows whose frequency is already in the document are marked. The user picks a starting channel. The selected channels go into consecutive channels from there, in file order, and **only into empty channels**: Import is disabled unless the whole run is empty. The sheet shows the bank and how far the empty run reaches, warns (without blocking) when the run crosses into the next bank, and **Find Empty Channels** moves the start to the first run that fits, preferring one inside a single bank. The import is one undo step.
+
 ## 6. Architecture
 
 ```
@@ -299,7 +310,7 @@ BC125ATKit/                  Swift package, no UI
 │   ├── Protocol             ScannerConnection (send/parse, ERR/NG), Wire (model ↔ command fields)
 │   ├── Model                Frequency, BandPlan, ToneCode, Channel, settings, ScannerConfig, validation
 │   ├── Sync                 ScannerSession actor: identify, readConfiguration, releaseProgramMode
-│   └── Formats              NativeFormat (.bc125at JSON), CSVFormat
+│   └── Formats              NativeFormat (.bc125at JSON), CSVFormat, UnidenFormat, RadioReferenceFormat
 ├── Sources/bc125at-cli      list/info/raw/dump/read/verify/probe/release
 └── Tests/BC125ATKitTests    Swift Testing; Fixtures/step-measurements.csv (19,505 measured values)
 ```

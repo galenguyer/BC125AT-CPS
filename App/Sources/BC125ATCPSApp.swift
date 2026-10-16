@@ -102,6 +102,7 @@ struct DocumentActions {
     var canUseScanner: Bool
     var importCSV: @MainActor () -> Void
     var exportCSV: @MainActor () -> Void
+    var importRadioReference: @MainActor () -> Void
     var importUniden: @MainActor () -> Void
     var exportUniden: @MainActor () -> Void
     var compare: @MainActor () -> Void
@@ -121,6 +122,9 @@ struct ScannerCommands: Commands {
                 .disabled(actions == nil)
             Button("Export Channels as CSV…") { actions?.exportCSV() }
                 .disabled(actions == nil)
+            Button("Import from RadioReference…") { actions?.importRadioReference() }
+                .disabled(actions == nil)
+                .help("Choose frequencies from a RadioReference CSV export and add them to empty channels")
             Divider()
             Button("Import Uniden File…") { actions?.importUniden() }
                 .disabled(actions == nil)

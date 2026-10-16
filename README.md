@@ -26,6 +26,9 @@ scanner, edit its 500 channels and settings, and write the changes back.
 - Saves configurations as `.bc125at` files, and imports and exports CSV (including bc125py's CSV).
 - Opens and saves files from Uniden's own BC125AT software (`.bc125at_ss`, **File ▸ Import Uniden File…**
   and **Export as Uniden File…**), so you can move between the two.
+- Imports frequencies from a RadioReference CSV export (**File ▸ Import from RadioReference…**):
+  pick which ones to add and the channel to start at. Digital and trunked frequencies, and ones
+  outside the scanner's bands, are left out; names, modulation and CTCSS/DCS tones come from the file.
 
 Requires macOS 15 or later and a BC125AT connected with a USB data cable. No driver is needed.
 
