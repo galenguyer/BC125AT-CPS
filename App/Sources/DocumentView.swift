@@ -29,6 +29,8 @@ struct DocumentView: View {
     @State private var exportFile: ExportFile?
     @State private var importSummary: (title: String, message: String)?
     @State private var radioReferenceFile: RadioReferenceFile?
+    /// Channels selected in the channel table.
+    @State private var channelSelection = Set<Int>()
     /// Identifies this window for drag and drop.
     @State private var window = UUID()
     @AppStorage(AppSettingsView.duplicateWarningsKey) private var duplicateWarnings = true
@@ -95,7 +97,7 @@ struct DocumentView: View {
             WriteSheet(writer: writer, write: startWrite)
         }
         .sheet(item: $radioReferenceFile) { file in
-            RadioReferenceImportSheet(file: file, config: config) { channels, start in
+            RadioReferenceImportSheet(file: file, config: config, selection: showsChannels ? channelSelection : []) { channels, start in
                 insertChannels(channels, at: start)
             }
         }
@@ -117,13 +119,21 @@ struct DocumentView: View {
         case .allChannels, .bank, nil:
             // One table for All Channels and every bank, so switching only reloads its rows
             // instead of building a new table with all its controls.
-            ChannelTableView(config: $document.config, numbers: channelNumbers, issues: issues, title: channelTitle, window: window)
+            ChannelTableView(config: $document.config, numbers: channelNumbers, issues: issues, title: channelTitle, window: window,
+                             selection: $channelSelection)
         case .search:
             SearchView(config: $document.config, issues: issues)
         case .globalLockouts:
             GlobalLockoutsView(config: $document.config, issues: issues)
         case .settings:
             SettingsView(config: $document.config, issues: issues)
+        }
+    }
+
+    private var showsChannels: Bool {
+        switch selection {
+        case .allChannels, .bank, nil: true
+        default: false
         }
     }
 

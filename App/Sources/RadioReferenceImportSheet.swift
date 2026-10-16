@@ -26,7 +26,9 @@ struct RadioReferenceImportSheet: View {
     /// Channel numbers already holding each frequency, to point out duplicates.
     private let existing: [Frequency: [Int]]
 
-    init(file: RadioReferenceFile, config: ScannerConfig, onImport: @escaping ([Channel], Int) -> Void) {
+    /// `selection` is the channels selected in the table; an empty one becomes the starting channel.
+    init(file: RadioReferenceFile, config: ScannerConfig, selection channelSelection: Set<Int> = [],
+         onImport: @escaping ([Channel], Int) -> Void) {
         self.file = file
         self.config = config
         self.onImport = onImport
@@ -39,7 +41,7 @@ struct RadioReferenceImportSheet: View {
         self.existing = existing
         let selection = RadioReferenceFormat.defaultSelection(file.entries, in: config)
         _selected = State(initialValue: selection)
-        _start = State(initialValue: config.firstEmptyRun(ofLength: max(selection.count, 1)) ?? config.firstEmptyRun(ofLength: 1) ?? 1)
+        _start = State(initialValue: config.importStart(selection: channelSelection, count: selection.count))
     }
 
     private var visible: [RadioReferenceFormat.Entry] {

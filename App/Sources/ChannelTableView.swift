@@ -10,12 +10,13 @@ struct ChannelTableView: View {
     var title: String
     /// Identifies this document window, so drags can tell a move from a copy between documents.
     var window: UUID
+    /// Selected channel numbers. Kept by the document, so an import can start at the selection.
+    @Binding var selection: Set<Int>
 
     @Environment(ScannerMonitor.self) private var monitor
     @AppStorage("showEmptyChannels") private var showEmptyChannels = false
     @AppStorage("showInspector") private var showInspector = false
     @State private var searchText = ""
-    @State private var selection = Set<Int>()
     @State private var sort = ChannelSort()
 
     var body: some View {

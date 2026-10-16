@@ -202,6 +202,13 @@ extension ScannerConfig {
         return starts.first { !Self.crossesBanks(start: $0, count: count) } ?? starts.first
     }
 
+    /// Where an import of `count` channels starts at first: the lowest selected channel if it's
+    /// empty, otherwise the first run of empty channels that fits (or the first empty channel).
+    public func importStart(selection: some Collection<Int>, count: Int) -> Int {
+        if let first = selection.min(), (1...Self.channelCount).contains(first), self[channel: first].isEmpty { return first }
+        return firstEmptyRun(ofLength: max(count, 1)) ?? firstEmptyRun(ofLength: 1) ?? 1
+    }
+
     /// Whether `count` channels from `start` run past the end of `start`'s bank.
     public static func crossesBanks(start: Int, count: Int) -> Bool {
         count > 0 && Channel.bank(ofChannel: start) != Channel.bank(ofChannel: start + count - 1)

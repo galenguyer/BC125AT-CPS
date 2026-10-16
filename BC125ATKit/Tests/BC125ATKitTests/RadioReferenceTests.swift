@@ -96,6 +96,16 @@ import Testing
         #expect(!ScannerConfig.crossesBanks(start: 41, count: 10))
     }
 
+    @Test func startsAtAnEmptySelectedChannel() {
+        var config = ScannerConfig()
+        config[channel: 1] = Channel(frequency: Frequency(parsing: "121.5"))
+        #expect(config.importStart(selection: [120, 80], count: 5) == 80)
+        // A channel in use, or no selection, falls back to the first room that fits.
+        #expect(config.importStart(selection: [1, 300], count: 5) == 2)
+        #expect(config.importStart(selection: [], count: 5) == 2)
+        #expect(config.importStart(selection: [], count: 0) == 2)
+    }
+
     @Test func insertsOnlyIntoEmptyChannels() {
         var config = ScannerConfig()
         config[channel: 5] = Channel(frequency: Frequency(parsing: "121.5"))
